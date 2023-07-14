@@ -2334,6 +2334,10 @@ __latent_entropy struct task_struct *copy_process(
 #ifdef CONFIG_SCHED_PROXY_EXEC
 	p->blocked_on_state = BO_RUNNABLE;
 	INIT_LIST_HEAD(&p->migration_node);
+	INIT_LIST_HEAD(&p->blocked_head);
+	INIT_LIST_HEAD(&p->blocked_node);
+	INIT_LIST_HEAD(&p->blocked_activation_node);
+	p->sleeping_owner = NULL;
 #endif
 #ifdef CONFIG_BCACHE
 	p->sequential_io	= 0;
