@@ -176,6 +176,12 @@ struct task_struct init_task __aligned(L1_CACHE_BYTES) = {
 	.blocked_on_state = BO_RUNNABLE,
 	.blocked_donor = NULL,
 	.migration_node = LIST_HEAD_INIT(init_task.migration_node),
+#ifdef CONFIG_SCHED_PROXY_EXEC
+	.blocked_head = LIST_HEAD_INIT(init_task.blocked_head),
+	.blocked_node = LIST_HEAD_INIT(init_task.blocked_node),
+	.blocked_activation_node = LIST_HEAD_INIT(init_task.blocked_activation_node),
+	.sleeping_owner = NULL,
+#endif
 #ifdef CONFIG_RT_MUTEXES
 	.pi_waiters	= RB_ROOT_CACHED,
 	.pi_top_task	= NULL,
