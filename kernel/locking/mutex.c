@@ -976,7 +976,7 @@ EXPORT_SYMBOL_GPL(ww_mutex_lock_interruptible);
 static noinline void __sched __mutex_unlock_slowpath(struct mutex *lock, unsigned long ip)
 	__releases(lock)
 {
-	struct task_struct *next = NULL;
+	struct task_struct *donor, *next = NULL;
 	struct mutex_waiter *waiter;
 	DEFINE_WAKE_Q(wake_q);
 	unsigned long owner;
@@ -997,6 +997,12 @@ static noinline void __sched __mutex_unlock_slowpath(struct mutex *lock, unsigne
 		MUTEX_WARN_ON(__owner_task(owner) != current);
 		MUTEX_WARN_ON(owner & MUTEX_FLAG_PICKUP);
 
+		if (sched_proxy_exec() && current->blocked_donor) {
+			/* force handoff if we have a blocked_donor */
+			owner = MUTEX_FLAG_HANDOFF;
+			break;
+		}
+
 		if (owner & MUTEX_FLAG_HANDOFF)
 			break;
 
@@ -1009,19 +1015,50 @@ static noinline void __sched __mutex_unlock_slowpath(struct mutex *lock, unsigne
 	}
 
 	raw_spin_lock_irqsave(&lock->wait_lock, flags);
+	raw_spin_lock(&current->blocked_lock);
 	debug_mutex_unlock(lock);
+
+	if (sched_proxy_exec()) {
+		/*
+		 * If we have a task boosting current, and that task was boosting
+		 * current through this lock, hand the lock to that task, as that
+		 * is the highest waiter, as selected by the scheduling function.
+		 */
+		donor = current->blocked_donor;
+		if (donor) {
+			struct mutex *next_lock;
+
+			raw_spin_lock_nested(&donor->blocked_lock, SINGLE_DEPTH_NESTING);
+			next_lock = __get_task_blocked_on(donor);
+			if (next_lock == lock) {
+				next = donor;
+				__set_task_blocked_on_waking(donor, next_lock);
+				wake_q_add(&wake_q, donor);
+				current->blocked_donor = NULL;
+			}
+			raw_spin_unlock(&donor->blocked_lock);
+		}
+	}
+
+	/*
+	 * Failing that, pick first on the wait list.
+	 */
 	waiter = lock->first_waiter;
-	if (waiter) {
+	if (!next && waiter) {
 		next = waiter->task;
 
+		raw_spin_lock_nested(&next->blocked_lock, SINGLE_DEPTH_NESTING);
 		debug_mutex_wake_waiter(lock, waiter);
-		set_task_blocked_on_waking(next, lock);
+		__set_task_blocked_on_waking(next, lock);
+		raw_spin_unlock(&next->blocked_lock);
 		wake_q_add(&wake_q, next);
+
 	}
 
 	if (owner & MUTEX_FLAG_HANDOFF)
 		__mutex_handoff(lock, next);
 
+	raw_spin_unlock(&current->blocked_lock);
 	raw_spin_unlock_irqrestore_wake(&lock->wait_lock, flags, &wake_q);
 }
 
