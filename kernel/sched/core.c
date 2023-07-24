@@ -6820,7 +6820,17 @@ err_out:
  * Find runnable lock owner to proxy for mutex blocked donor
  *
  * Follow the blocked-on relation:
- *   task->blocked_on -> mutex->owner -> task...
+ *
+ *                ,-> task
+ *                |     | blocked-on
+ *                |     v
+ *  blocked_donor |   mutex
+ *                |     | owner
+ *                |     v
+ *                `-- task
+ *
+ * and set the blocked_donor relation, this latter is used by the mutex
+ * code to find which (blocked) task to hand-off to.
  *
  * Lock order:
  *
@@ -6964,6 +6974,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 		 * rq, therefore holding @rq->lock is sufficient to
 		 * guarantee its existence, as per ttwu_remote().
 		 */
+		owner->blocked_donor = p;
 	}
 
 	/* Handle actions we need to do outside of the guard() scope */
@@ -7126,6 +7137,7 @@ pick_again:
 	next = pick_next_task(rq, &rf);
 	rq_set_donor(rq, next);
 	rq->next_class = next->sched_class;
+	next->blocked_donor = NULL;
 	if (sched_proxy_exec()) {
 		if (unlikely(next->blocked_on)) {
 			next = find_proxy_task(rq, next, &rf);
