@@ -1243,6 +1243,7 @@ struct task_struct {
 	raw_spinlock_t			blocked_lock;
 #ifdef CONFIG_SCHED_PROXY_EXEC
 	enum blocked_on_state		blocked_on_state;
+	struct list_head		migration_node;
 #endif
 
 #ifdef CONFIG_DETECT_HUNG_TASK_BLOCKER
