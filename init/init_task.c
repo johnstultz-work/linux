@@ -176,6 +176,7 @@ struct task_struct init_task __aligned(L1_CACHE_BYTES) = {
 #endif
 	.blocked_on_state = BO_RUNNABLE,
 	.blocked_donor = NULL,
+	.migration_node = LIST_HEAD_INIT(init_task.migration_node),
 #ifdef CONFIG_RT_MUTEXES
 	.pi_waiters	= RB_ROOT_CACHED,
 	.pi_top_task	= NULL,
