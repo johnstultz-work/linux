@@ -3039,6 +3039,34 @@ extern void set_rq_offline(struct rq *rq);
 
 extern bool sched_smp_initialized;
 
+static inline bool __revalidate_rq_state(struct task_struct *task, struct rq *rq,
+					 struct rq *lowest)
+{
+	/*
+	 * We had to unlock the run queue. In the mean time, task could have
+	 * migrated already or had its affinity changed. Also make sure that it
+	 * wasn't scheduled on its rq. It is possible the task was scheduled,
+	 * set "migrate_disabled" and then got preempted, so we must check the
+	 * task migration disable flag here too.
+	 */
+	if (task_rq(task) != rq)
+		return false;
+
+	if (!cpumask_test_cpu(lowest->cpu, &task->cpus_mask))
+		return false;
+
+	if (task_on_cpu(rq, task))
+		return false;
+
+	if (is_migration_disabled(task))
+		return false;
+
+	if (!task_on_rq_queued(task))
+		return false;
+
+	return true;
+}
+
 DEFINE_LOCK_GUARD_2(double_rq_lock, struct rq,
 		    double_rq_lock(_T->lock, _T->lock2),
 		    double_rq_unlock(_T->lock, _T->lock2))
@@ -3793,7 +3821,7 @@ static inline void init_sched_mm_cid(struct task_struct *t) { }
 extern u64 avg_vruntime(struct cfs_rq *cfs_rq);
 extern int entity_eligible(struct cfs_rq *cfs_rq, struct sched_entity *se);
 static inline
-void move_queued_task_locked(struct rq *src_rq, struct rq *dst_rq, struct task_struct *task)
+void __move_queued_task_locked(struct rq *src_rq, struct rq *dst_rq, struct task_struct *task)
 {
 	lockdep_assert_rq_held(src_rq);
 	lockdep_assert_rq_held(dst_rq);
@@ -3804,18 +3832,32 @@ void move_queued_task_locked(struct rq *src_rq, struct rq *dst_rq, struct task_s
 }
 
 static inline
-bool task_is_pushable(struct rq *rq, struct task_struct *p, int cpu)
+int __task_is_pushable(struct rq *rq, struct task_struct *p, int cpu)
 {
-	if (!task_on_cpu(rq, p) &&
-	    cpumask_test_cpu(cpu, &p->cpus_mask))
-		return true;
+	if (!task_on_cpu(rq, p))
+		return cpumask_test_cpu(cpu, &p->cpus_mask) ? 1 : -1;
 
-	return false;
+	return 0;
 }
 
 #ifdef CONFIG_SCHED_PROXY_EXEC
+void move_queued_task_locked(struct rq *rq, struct rq *dst_rq, struct task_struct *task);
+int task_is_pushable(struct rq *rq, struct task_struct *p, int cpu);
 struct task_struct *find_exec_ctx(struct rq *rq, struct task_struct *p);
 #else /* !CONFIG_SCHED_PROXY_EXEC */
+#ifdef CONFIG_SMP
+static inline
+void move_queued_task_locked(struct rq *rq, struct rq *dst_rq, struct task_struct *task)
+{
+	__move_queued_task_locked(rq, dst_rq, task);
+}
+
+static inline
+int task_is_pushable(struct rq *rq, struct task_struct *p, int cpu)
+{
+	return __task_is_pushable(rq, p, cpu);
+}
+#endif
 static inline
 struct task_struct *find_exec_ctx(struct rq *rq, struct task_struct *p)
 {
