@@ -4367,6 +4367,7 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 		ttwu_queue(p, cpu, wake_flags);
 	}
 out:
+	set_blocked_on_runnable(p);
 	if (success)
 		ttwu_stat(p, task_cpu(p), wake_flags);
 
@@ -6726,7 +6727,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 
 		owner = __mutex_owner(mutex);
 		if (!owner) {
-			__clear_task_blocked_on(p, mutex);
+			__force_blocked_on_runnable(p);
 			ret = p;
 			goto out;
 		}
@@ -6809,11 +6810,11 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 deactivate_failed:
 	/*
 	 * XXX: For now, if deactivation failed, set donor
-	 * as unblocked, as we aren't doing proxy-migrations
+	 * as BO_RUNNABLE, as we aren't doing proxy-migrations
 	 * yet (more logic will be needed then).
 	 */
 	raw_spin_unlock(&p->blocked_lock);
-	clear_task_blocked_on(donor, NULL);
+	force_blocked_on_runnable(donor);
 	raw_spin_unlock(&mutex->wait_lock);
 	return NULL; /* do pick_next_task again */
 out:
