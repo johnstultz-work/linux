@@ -783,6 +783,12 @@ struct kmap_ctrl {
 #endif
 };
 
+enum blocked_on_state {
+	BO_RUNNABLE,
+	BO_BLOCKED,
+	BO_WAKING,
+};
+
 struct task_struct {
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/*
@@ -1203,6 +1209,7 @@ struct task_struct {
 	struct rt_mutex_waiter		*pi_blocked_on;
 #endif
 
+	enum blocked_on_state		blocked_on_state;
 	struct mutex			*blocked_on;	/* lock we're blocked on */
 	raw_spinlock_t			blocked_lock;
 
@@ -2122,15 +2129,65 @@ extern int __cond_resched_rwlock_write(rwlock_t *lock);
 	__cond_resched_rwlock_write(lock);					\
 })
 
-#ifndef CONFIG_PREEMPT_RT
+static inline void __force_blocked_on_runnable(struct task_struct *p)
+{
+	lockdep_assert_held(&p->blocked_lock);
+	p->blocked_on_state = BO_RUNNABLE;
+}
+
+static inline void force_blocked_on_runnable(struct task_struct *p)
+{
+	guard(raw_spinlock_irqsave)(&p->blocked_lock);
+	__force_blocked_on_runnable(p);
+}
+
+static inline void __set_blocked_on_runnable(struct task_struct *p)
+{
+	lockdep_assert_held(&p->blocked_lock);
+
+	if (p->blocked_on_state == BO_WAKING)
+		p->blocked_on_state = BO_RUNNABLE;
+}
+
+static inline void set_blocked_on_runnable(struct task_struct *p)
+{
+	if (!sched_proxy_exec())
+		return;
+
+	guard(raw_spinlock_irqsave)(&p->blocked_lock);
+	__set_blocked_on_runnable(p);
+}
+
+static inline void __set_blocked_on_waking(struct task_struct *p)
+{
+	lockdep_assert_held(&p->blocked_lock);
+
+	if (p->blocked_on_state == BO_BLOCKED)
+		p->blocked_on_state = BO_WAKING;
+}
+
 static inline struct mutex *__get_task_blocked_on(struct task_struct *p)
 {
-	struct mutex *m = p->blocked_on;
-
-	if (m)
-		lockdep_assert_held_once(&m->wait_lock);
-	return m;
+	lockdep_assert_held_once(&p->blocked_lock);
+	return p->blocked_on;
 }
+
+#ifndef CONFIG_PREEMPT_RT
+static inline void set_blocked_on_waking_nested(struct task_struct *p, struct mutex *m)
+{
+	raw_spin_lock_nested(&p->blocked_lock, SINGLE_DEPTH_NESTING);
+	WARN_ON_ONCE(__get_task_blocked_on(p) != m);
+	__set_blocked_on_waking(p);
+	raw_spin_unlock(&p->blocked_lock);
+}
+#else
+static inline void set_blocked_on_waking_nested(struct task_struct *p, struct rt_mutex *m)
+{
+	raw_spin_lock_nested(&p->blocked_lock, SINGLE_DEPTH_NESTING);
+	__set_blocked_on_waking(p);
+	raw_spin_unlock(&p->blocked_lock);
+}
+#endif
 
 static inline void __set_task_blocked_on(struct task_struct *p, struct mutex *m)
 {
@@ -2141,57 +2198,24 @@ static inline void __set_task_blocked_on(struct task_struct *p, struct mutex *m)
 	lockdep_assert_held_once(&p->blocked_lock);
 	/*
 	 * Check ensure we don't overwrite existing mutex value
-	 * with a different mutex. Note, setting it to the same
-	 * lock repeatedly is ok.
+	 * with a different mutex.
 	 */
-	WARN_ON_ONCE(p->blocked_on && p->blocked_on != m);
+	WARN_ON_ONCE(p->blocked_on);
 	p->blocked_on = m;
-}
-
-static inline void set_task_blocked_on(struct task_struct *p, struct mutex *m)
-{
-	guard(raw_spinlock_irqsave)(&p->blocked_lock);
-	__set_task_blocked_on(p, m);
+	p->blocked_on_state = BO_BLOCKED;
 }
 
 static inline void __clear_task_blocked_on(struct task_struct *p, struct mutex *m)
 {
+	/* The task should only be clearing itself */
+	WARN_ON_ONCE(p != current);
 	/* Currently we serialize blocked_on under the task::blocked_lock */
 	lockdep_assert_held_once(&p->blocked_lock);
-	/*
-	 * There may be cases where we re-clear already cleared
-	 * blocked_on relationships, but make sure we are not
-	 * clearing the relationship with a different lock.
-	 */
-	WARN_ON_ONCE(m && p->blocked_on && p->blocked_on != m);
+	/* Make sure we are clearing the relationship with the right lock */
+	WARN_ON_ONCE(p->blocked_on != m);
 	p->blocked_on = NULL;
+	p->blocked_on_state = BO_RUNNABLE;
 }
-
-static inline void clear_task_blocked_on(struct task_struct *p, struct mutex *m)
-{
-	guard(raw_spinlock_irqsave)(&p->blocked_lock);
-	__clear_task_blocked_on(p, m);
-}
-
-static inline void clear_task_blocked_on_nested(struct task_struct *p, struct mutex *m)
-{
-	raw_spin_lock_nested(&p->blocked_lock, SINGLE_DEPTH_NESTING);
-	__clear_task_blocked_on(p, m);
-	raw_spin_unlock(&p->blocked_lock);
-}
-#else
-static inline void __clear_task_blocked_on(struct task_struct *p, struct rt_mutex *m)
-{
-}
-
-static inline void clear_task_blocked_on(struct task_struct *p, struct rt_mutex *m)
-{
-}
-
-static inline void clear_task_blocked_on_nested(struct task_struct *p, struct rt_mutex *m)
-{
-}
-#endif /* !CONFIG_PREEMPT_RT */
 
 static __always_inline bool need_resched(void)
 {
