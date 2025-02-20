@@ -682,11 +682,9 @@ __mutex_lock_common(struct mutex *lock, unsigned int state, unsigned int subclas
 		raw_spin_lock_irqsave(&lock->wait_lock, flags);
 		raw_spin_lock(&current->blocked_lock);
 		/*
-		 * As we likely have been woken up by task
-		 * that has cleared our blocked_on state, re-set
-		 * it to the lock we are trying to acquire.
+		 * Re-set blocked_on_state as unlock path set it to WAKING/RUNNABLE
 		 */
-		__set_task_blocked_on(current, lock);
+		__force_blocked_on_blocked(current);
 		set_current_state(state);
 		/*
 		 * Here we order against unlock; we must either see it change
@@ -705,7 +703,7 @@ __mutex_lock_common(struct mutex *lock, unsigned int state, unsigned int subclas
 			 * and clear blocked on so we don't become unselectable
 			 * to run.
 			 */
-			__clear_task_blocked_on(current, lock);
+			__force_blocked_on_runnable(current);
 			raw_spin_unlock(&current->blocked_lock);
 			raw_spin_unlock_irqrestore(&lock->wait_lock, flags);
 
@@ -714,7 +712,7 @@ __mutex_lock_common(struct mutex *lock, unsigned int state, unsigned int subclas
 
 			raw_spin_lock_irqsave(&lock->wait_lock, flags);
 			raw_spin_lock(&current->blocked_lock);
-			__set_task_blocked_on(current, lock);
+			__force_blocked_on_blocked(current);
 
 			if (opt_acquired)
 				break;
@@ -966,8 +964,11 @@ static noinline void __sched __mutex_unlock_slowpath(struct mutex *lock, unsigne
 
 		next = waiter->task;
 
+		raw_spin_lock(&next->blocked_lock);
 		debug_mutex_wake_waiter(lock, waiter);
-		clear_task_blocked_on(next, lock);
+		WARN_ON_ONCE(__get_task_blocked_on(next) != lock);
+		__set_blocked_on_waking(next);
+		raw_spin_unlock(&next->blocked_lock);
 		wake_q_add(&wake_q, next);
 	}
 

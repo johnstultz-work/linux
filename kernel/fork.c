@@ -2130,6 +2130,9 @@ __latent_entropy struct task_struct *copy_process(
 #endif
 
 	p->blocked_on = NULL; /* not blocked yet */
+#ifdef CONFIG_SCHED_PROXY_EXEC
+	p->blocked_on_state = BO_RUNNABLE;
+#endif
 
 #ifdef CONFIG_BCACHE
 	p->sequential_io	= 0;

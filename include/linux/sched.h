@@ -813,6 +813,12 @@ struct kmap_ctrl {
 #endif
 };
 
+enum blocked_on_state {
+	BO_RUNNABLE,
+	BO_BLOCKED,
+	BO_WAKING,
+};
+
 struct task_struct {
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/*
@@ -1234,6 +1240,9 @@ struct task_struct {
 
 	struct mutex			*blocked_on;	/* lock we're blocked on */
 	raw_spinlock_t			blocked_lock;
+#ifdef CONFIG_SCHED_PROXY_EXEC
+	enum blocked_on_state		blocked_on_state;
+#endif
 
 #ifdef CONFIG_DETECT_HUNG_TASK_BLOCKER
 	/*
@@ -2139,7 +2148,6 @@ extern int __cond_resched_rwlock_write(rwlock_t *lock);
 	__cond_resched_rwlock_write(lock);					\
 })
 
-#ifndef CONFIG_PREEMPT_RT
 static inline struct mutex *__get_task_blocked_on(struct task_struct *p)
 {
 	lockdep_assert_held_once(&p->blocked_lock);
@@ -2152,6 +2160,13 @@ static inline struct mutex *get_task_blocked_on(struct task_struct *p)
 	return __get_task_blocked_on(p);
 }
 
+static inline void __force_blocked_on_blocked(struct task_struct *p);
+static inline void __force_blocked_on_runnable(struct task_struct *p);
+
+/*
+ * These helpers set and clear the task blocked_on pointer, as well
+ * as setting the initial blocked_on_state, or clearing it
+ */
 static inline void __set_task_blocked_on(struct task_struct *p, struct mutex *m)
 {
 	WARN_ON_ONCE(!m);
@@ -2161,24 +2176,23 @@ static inline void __set_task_blocked_on(struct task_struct *p, struct mutex *m)
 	lockdep_assert_held_once(&p->blocked_lock);
 	/*
 	 * Check ensure we don't overwrite existing mutex value
-	 * with a different mutex. Note, setting it to the same
-	 * lock repeatedly is ok.
+	 * with a different mutex.
 	 */
-	WARN_ON_ONCE(p->blocked_on && p->blocked_on != m);
+	WARN_ON_ONCE(p->blocked_on);
 	p->blocked_on = m;
+	__force_blocked_on_blocked(p);
 }
 
 static inline void __clear_task_blocked_on(struct task_struct *p, struct mutex *m)
 {
+	/* The task should only be clearing itself */
+	WARN_ON_ONCE(p != current);
 	/* Currently we serialize blocked_on under the task::blocked_lock */
 	lockdep_assert_held_once(&p->blocked_lock);
-	/*
-	 * There may be cases where we re-clear already cleared
-	 * blocked_on relationships, but make sure we are not
-	 * clearing the relationship with a different lock.
-	 */
-	WARN_ON_ONCE(m && p->blocked_on && p->blocked_on != m);
+	/* Make sure we are clearing the relationship with the right lock */
+	WARN_ON_ONCE(m && p->blocked_on != m);
 	p->blocked_on = NULL;
+	__force_blocked_on_runnable(p);
 }
 
 static inline void clear_task_blocked_on(struct task_struct *p, struct mutex *m)
@@ -2186,15 +2200,65 @@ static inline void clear_task_blocked_on(struct task_struct *p, struct mutex *m)
 	guard(raw_spinlock_irqsave)(&p->blocked_lock);
 	__clear_task_blocked_on(p, m);
 }
-#else
-static inline void __clear_task_blocked_on(struct task_struct *p, struct rt_mutex *m)
+
+/*
+ * The following helpers manage the blocked_on_state transitions while
+ * the blocked_on pointer is set.
+ */
+#ifdef CONFIG_SCHED_PROXY_EXEC
+static inline void __force_blocked_on_blocked(struct task_struct *p)
 {
+	lockdep_assert_held(&p->blocked_lock);
+	p->blocked_on_state = BO_BLOCKED;
 }
 
-static inline void clear_task_blocked_on(struct task_struct *p, struct rt_mutex *m)
+static inline void __set_blocked_on_waking(struct task_struct *p)
 {
+	lockdep_assert_held(&p->blocked_lock);
+	if (p->blocked_on_state == BO_BLOCKED)
+		p->blocked_on_state = BO_WAKING;
 }
-#endif /* !CONFIG_PREEMPT_RT */
+
+static inline void set_blocked_on_waking(struct task_struct *p)
+{
+	guard(raw_spinlock_irqsave)(&p->blocked_lock);
+	__set_blocked_on_waking(p);
+}
+
+static inline void __force_blocked_on_runnable(struct task_struct *p)
+{
+	lockdep_assert_held(&p->blocked_lock);
+	p->blocked_on_state = BO_RUNNABLE;
+}
+
+static inline void force_blocked_on_runnable(struct task_struct *p)
+{
+	guard(raw_spinlock_irqsave)(&p->blocked_lock);
+	__force_blocked_on_runnable(p);
+}
+
+static inline void __set_blocked_on_runnable(struct task_struct *p)
+{
+	lockdep_assert_held(&p->blocked_lock);
+	if (p->blocked_on_state == BO_WAKING)
+		p->blocked_on_state = BO_RUNNABLE;
+}
+
+static inline void set_blocked_on_runnable(struct task_struct *p)
+{
+	if (!sched_proxy_exec())
+		return;
+	guard(raw_spinlock_irqsave)(&p->blocked_lock);
+	__set_blocked_on_runnable(p);
+}
+#else  /* CONFIG_SCHED_PROXY_EXEC */
+static inline void __force_blocked_on_blocked(struct task_struct *p) {}
+static inline void __set_blocked_on_waking(struct task_struct *p) {}
+static inline void set_blocked_on_waking(struct task_struct *p) {}
+static inline void __force_blocked_on_runnable(struct task_struct *p) {}
+static inline void __set_blocked_on_runnable(struct task_struct *p) {}
+static inline void set_blocked_on_runnable(struct task_struct *p) {}
+#endif /* CONFIG_SCHED_PROXY_EXEC */
 
 static __always_inline bool need_resched(void)
 {

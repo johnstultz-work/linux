@@ -4328,6 +4328,12 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 		ttwu_queue(p, cpu, wake_flags);
 	}
 out:
+	/*
+	 * For now, if we've been woken up, set us as BO_RUNNABLE
+	 * We will need to be more careful later when handling
+	 * proxy migration
+	 */
+	set_blocked_on_runnable(p);
 	if (success)
 		ttwu_stat(p, task_cpu(p), wake_flags);
 
@@ -6623,7 +6629,7 @@ static struct task_struct *proxy_deactivate(struct rq *rq, struct task_struct *d
 		 * as unblocked, as we aren't doing proxy-migrations
 		 * yet (more logic will be needed then).
 		 */
-		donor->blocked_on = NULL;
+		force_blocked_on_runnable(donor);
 	}
 	return NULL;
 }
@@ -6651,6 +6657,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 	int this_cpu = cpu_of(rq);
 	struct task_struct *p;
 	struct mutex *mutex;
+	enum { FOUND, DEACTIVATE_DONOR } action = FOUND;
 
 	/* Follow blocked_on chain. */
 	for (p = donor; task_is_blocked(p); p = owner) {
@@ -6676,20 +6683,43 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 			return NULL;
 		}
 
+		/*
+		 * If a ww_mutex hits the die/wound case, it marks the task as
+		 * BO_WAKING and calls try_to_wake_up(), so that the mutex
+		 * cycle can be broken and we avoid a deadlock.
+		 *
+		 * However, if at that moment, we are here on the cpu which the
+		 * die/wounded task is enqueued, we might loop on the cycle as
+		 * BO_WAKING still causes task_is_blocked() to return true
+		 * (since we want return migration to occur before we run the
+		 * task).
+		 *
+		 * Unfortunately since we hold the rq lock, it will block
+		 * try_to_wake_up from completing and doing the return
+		 * migration.
+		 *
+		 * So when we hit a !BO_BLOCKED task briefly schedule idle
+		 * so we release the rq and let the wakeup complete.
+		 */
+		if (p->blocked_on_state != BO_BLOCKED)
+			return proxy_resched_idle(rq);
+
 		owner = __mutex_owner(mutex);
 		if (!owner) {
-			__clear_task_blocked_on(p, mutex);
+			__force_blocked_on_runnable(p);
 			return p;
 		}
 
 		if (!READ_ONCE(owner->on_rq) || owner->se.sched_delayed) {
 			/* XXX Don't handle blocked owners/delayed dequeue yet */
-			return proxy_deactivate(rq, donor);
+			action = DEACTIVATE_DONOR;
+			break;
 		}
 
 		if (task_cpu(owner) != this_cpu) {
 			/* XXX Don't handle migrations yet */
-			return proxy_deactivate(rq, donor);
+			action = DEACTIVATE_DONOR;
+			break;
 		}
 
 		if (task_on_rq_migrating(owner)) {
@@ -6747,6 +6777,13 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 		 */
 	}
 
+	/* Handle actions we need to do outside of the guard() scope */
+	switch (action) {
+	case DEACTIVATE_DONOR:
+		return proxy_deactivate(rq, donor);
+	case FOUND:
+		/* fallthrough */;
+	}
 	WARN_ON_ONCE(owner && !owner->on_rq);
 	return owner;
 }
