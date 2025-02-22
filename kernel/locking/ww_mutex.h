@@ -289,7 +289,8 @@ __ww_mutex_die(struct MUTEX *lock, struct MUTEX_WAITER *waiter,
 		 * blocked_on pointer. Otherwise we can see circular
 		 * blocked_on relationships that can't resolve.
 		 */
-		__clear_task_blocked_on(waiter->task, lock);
+		 /* nested as we should hold current->blocked_lock already */
+		clear_task_blocked_on_nested(waiter->task, lock);
 		wake_q_add(wake_q, waiter->task);
 	}
 
@@ -343,7 +344,8 @@ static bool __ww_mutex_wound(struct MUTEX *lock,
 			 * blocked_on pointer. Otherwise we can see circular
 			 * blocked_on relationships that can't resolve.
 			 */
-			__clear_task_blocked_on(owner, lock);
+			/* nested as we should hold current->blocked_lock already */
+			clear_task_blocked_on_nested(owner, lock);
 			wake_q_add(wake_q, owner);
 		}
 		return true;
