@@ -868,7 +868,6 @@ config SCHED_PROXY_EXEC
 	default n
 	# Avoid some build failures w/ PREEMPT_RT until it can be fixed
 	depends on !PREEMPT_RT
-	depends on EXPERT
 	help
 	  This option enables proxy execution, a mechanism for mutex-owning
 	  tasks to inherit the scheduling context of higher priority waiters.
