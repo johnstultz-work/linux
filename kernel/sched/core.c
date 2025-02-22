@@ -6630,6 +6630,7 @@ static bool proxy_deactivate(struct rq *rq, struct task_struct *donor)
  *   p->pi_lock
  *     rq->lock
  *       mutex->wait_lock
+ *         p->blocked_lock
  *
  * Returns the task that is going to be used as execution context (the one
  * that is actually going to be run on cpu_of(rq)).
@@ -6654,8 +6655,9 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 		 * and ensure @owner sticks around.
 		 */
 		raw_spin_lock(&mutex->wait_lock);
+		raw_spin_lock(&p->blocked_lock);
 
-		/* Check again that p is blocked with wait_lock held */
+		/* Check again that p is blocked with blocked_lock held */
 		if (mutex != __get_task_blocked_on(p)) {
 			/*
 			 * Something changed in the blocked_on chain and
@@ -6689,6 +6691,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 			 * case we should end up back in find_proxy_task(), this time
 			 * hopefully with all relevant tasks already enqueued.
 			 */
+			raw_spin_unlock(&p->blocked_lock);
 			raw_spin_unlock(&mutex->wait_lock);
 			return proxy_resched_idle(rq);
 		}
@@ -6730,6 +6733,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 			 * So schedule rq->idle so that ttwu_runnable can get the rq lock
 			 * and mark owner as running.
 			 */
+			raw_spin_unlock(&p->blocked_lock);
 			raw_spin_unlock(&mutex->wait_lock);
 			return proxy_resched_idle(rq);
 		}
@@ -6739,6 +6743,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 		 * rq, therefore holding @rq->lock is sufficient to
 		 * guarantee its existence, as per ttwu_remote().
 		 */
+		raw_spin_unlock(&p->blocked_lock);
 		raw_spin_unlock(&mutex->wait_lock);
 	}
 
@@ -6751,8 +6756,12 @@ deactivate_failed:
 	 * as unblocked, as we aren't doing proxy-migrations
 	 * yet (more logic will be needed then).
 	 */
-	donor->blocked_on = NULL; /* XXX not following locking rules :( */
+	raw_spin_unlock(&p->blocked_lock);
+	clear_task_blocked_on(donor, NULL);
+	raw_spin_unlock(&mutex->wait_lock);
+	return NULL; /* do pick_next_task again */
 out:
+	raw_spin_unlock(&p->blocked_lock);
 	raw_spin_unlock(&mutex->wait_lock);
 	return NULL; /* do pick_next_task again */
 }
