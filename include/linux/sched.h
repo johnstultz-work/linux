@@ -1232,6 +1232,7 @@ struct task_struct {
 #endif
 
 	struct mutex			*blocked_on;	/* lock we're blocked on */
+	raw_spinlock_t			blocked_lock;
 
 #ifdef CONFIG_DETECT_HUNG_TASK_BLOCKER
 	/*
@@ -2145,8 +2146,8 @@ static inline void __set_task_blocked_on(struct task_struct *p, struct mutex *m)
 	WARN_ON_ONCE(!m);
 	/* The task should only be setting itself as blocked */
 	WARN_ON_ONCE(p != current);
-	/* Currently we serialize blocked_on under the mutex::wait_lock */
-	lockdep_assert_held_once(&m->wait_lock);
+	/* Currently we serialize blocked_on under the task::blocked_lock */
+	lockdep_assert_held_once(&p->blocked_lock);
 	/*
 	 * Check ensure we don't overwrite existing mutex value
 	 * with a different mutex. Note, setting it to the same
@@ -2158,15 +2159,14 @@ static inline void __set_task_blocked_on(struct task_struct *p, struct mutex *m)
 
 static inline void set_task_blocked_on(struct task_struct *p, struct mutex *m)
 {
-	guard(raw_spinlock_irqsave)(&m->wait_lock);
+	guard(raw_spinlock_irqsave)(&p->blocked_lock);
 	__set_task_blocked_on(p, m);
 }
 
 static inline void __clear_task_blocked_on(struct task_struct *p, struct mutex *m)
 {
-	WARN_ON_ONCE(!m);
-	/* Currently we serialize blocked_on under the mutex::wait_lock */
-	lockdep_assert_held_once(&m->wait_lock);
+	/* Currently we serialize blocked_on under the task::blocked_lock */
+	lockdep_assert_held_once(&p->blocked_lock);
 	/*
 	 * There may be cases where we re-clear already cleared
 	 * blocked_on relationships, but make sure we are not
@@ -2178,8 +2178,15 @@ static inline void __clear_task_blocked_on(struct task_struct *p, struct mutex *
 
 static inline void clear_task_blocked_on(struct task_struct *p, struct mutex *m)
 {
-	guard(raw_spinlock_irqsave)(&m->wait_lock);
+	guard(raw_spinlock_irqsave)(&p->blocked_lock);
 	__clear_task_blocked_on(p, m);
+}
+
+static inline void clear_task_blocked_on_nested(struct task_struct *p, struct mutex *m)
+{
+	raw_spin_lock_nested(&p->blocked_lock, SINGLE_DEPTH_NESTING);
+	__clear_task_blocked_on(p, m);
+	raw_spin_unlock(&p->blocked_lock);
 }
 #else
 static inline void __clear_task_blocked_on(struct task_struct *p, struct rt_mutex *m)
@@ -2187,6 +2194,10 @@ static inline void __clear_task_blocked_on(struct task_struct *p, struct rt_mute
 }
 
 static inline void clear_task_blocked_on(struct task_struct *p, struct rt_mutex *m)
+{
+}
+
+static inline void clear_task_blocked_on_nested(struct task_struct *p, struct rt_mutex *m)
 {
 }
 #endif /* !CONFIG_PREEMPT_RT */
