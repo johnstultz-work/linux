@@ -5003,6 +5003,40 @@ static inline void finish_task(struct task_struct *prev)
 #endif
 }
 
+#if defined(CONFIG_SCHED_PROXY_EXEC) && defined(CONFIG_SMP)
+/*
+ * Only called from __schedule context
+ *
+ * There are some cases where we are going to re-do the action
+ * that added the balance callbacks. We may not be in a state
+ * where we can run them, so just zap them so they can be
+ * properly re-added on the next time around. This is similar
+ * handling to running the callbacks, except we just don't call
+ * them.
+ */
+static void zap_balance_callbacks(struct rq *rq)
+{
+	struct balance_callback *next, *head;
+	bool found = false;
+
+	lockdep_assert_rq_held(rq);
+
+	head = rq->balance_callback;
+	while (head) {
+		if (head == &balance_push_callback)
+			found = true;
+		next = head->next;
+		head->next = NULL;
+		head = next;
+	}
+	rq->balance_callback = found ? &balance_push_callback : NULL;
+}
+#else
+static inline void zap_balance_callbacks(struct rq *rq)
+{
+}
+#endif
+
 #ifdef CONFIG_SMP
 
 static void do_balance_callbacks(struct rq *rq, struct balance_callback *head)
@@ -6946,8 +6980,11 @@ pick_again:
 	rq_set_donor(rq, next);
 	if (unlikely(task_is_blocked(next))) {
 		next = find_proxy_task(rq, next, &rf);
-		if (!next)
+		if (!next) {
+			/* zap the balance_callbacks before picking again */
+			zap_balance_callbacks(rq);
 			goto pick_again;
+		}
 		if (next == rq->idle)
 			goto keep_resched;
 	}
