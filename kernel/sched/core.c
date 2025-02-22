@@ -7045,11 +7045,8 @@ pick_again:
 	rq_set_donor(rq, next);
 	if (unlikely(task_is_blocked(next))) {
 		next = find_proxy_task(rq, next, &rf);
-		if (!next) {
-			/* zap the balance_callbacks before picking again */
-			zap_balance_callbacks(rq);
+		if (!next)
 			goto pick_again;
-		}
 		if (next == rq->idle)
 			goto keep_resched;
 	}
