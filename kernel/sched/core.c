@@ -3759,7 +3759,7 @@ static inline void proxy_set_task_cpu(struct task_struct *p, int cpu)
 	unsigned int wake_cpu;
 
 	/* Sanity check to make sure we can return safely */
-	WARN_ON(!is_cpu_allowed(p, p->wake_cpu));
+	WARN_ON(!is_cpu_allowed(p, p->wake_cpu));  /* Actually tripped this, need to figure out what to do in that case */
 	/*
 	 * Since we are enqueuing a blocked task on a cpu it may
 	 * not be able to run on, preserve wake_cpu when we
