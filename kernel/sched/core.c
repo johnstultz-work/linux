@@ -7374,7 +7374,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 
 needs_return:
 #ifdef CONFIG_SMP
-	WARN_ON(!is_cpu_allowed(p, p->wake_cpu));
+	WARN_ON(!is_cpu_allowed(p, p->wake_cpu)); /* Hit this one too! using cpu hotplug */
 	if (p->wake_cpu == this_cpu) {
 		/* We can actually run here fine */
 		p->blocked_on_state = BO_RUNNABLE;
