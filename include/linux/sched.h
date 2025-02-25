@@ -783,11 +783,11 @@ struct kmap_ctrl {
 #endif
 };
 
-enum blocked_on_state {
-	BO_RUNNABLE,
-	BO_BLOCKED,
-	BO_WAKING,
-};
+#define BO_RUNNABLE		0x0
+#define BO_BLOCKED		0x1
+#define BO_NEEDS_RETURN		0x2
+
+
 
 struct task_struct {
 #ifdef CONFIG_THREAD_INFO_IN_TASK
@@ -1209,7 +1209,7 @@ struct task_struct {
 	struct rt_mutex_waiter		*pi_blocked_on;
 #endif
 
-	enum blocked_on_state		blocked_on_state;
+	int				blocked_on_state;
 	struct mutex			*blocked_on;	/* lock we're blocked on */
 	struct task_struct		*blocked_donor;	/* task that is boosting this task */
 	struct list_head		migration_node;
@@ -2138,9 +2138,21 @@ extern int __cond_resched_rwlock_write(rwlock_t *lock);
 	__cond_resched_rwlock_write(lock);					\
 })
 
+static inline void __force_blocked_on_blocked(struct task_struct *p)
+{
+	lockdep_assert_held(&p->blocked_lock);
+
+	WARN_ON(p->blocked_on_state & BO_NEEDS_RETURN);
+
+	p->blocked_on_state |= BO_BLOCKED;
+}
+
 static inline void __force_blocked_on_runnable(struct task_struct *p)
 {
 	lockdep_assert_held(&p->blocked_lock);
+
+	WARN_ON(p->blocked_on_state & BO_NEEDS_RETURN);
+
 	p->blocked_on_state = BO_RUNNABLE;
 }
 
@@ -2150,29 +2162,50 @@ static inline void force_blocked_on_runnable(struct task_struct *p)
 	__force_blocked_on_runnable(p);
 }
 
-static inline void __set_blocked_on_runnable(struct task_struct *p)
+static inline void __clear_blocked_on_blocked(struct task_struct *p)
 {
 	lockdep_assert_held(&p->blocked_lock);
 
-	if (p->blocked_on_state == BO_WAKING)
-		p->blocked_on_state = BO_RUNNABLE;
+	p->blocked_on_state &= ~BO_BLOCKED;
 }
 
-static inline void set_blocked_on_runnable(struct task_struct *p)
+static inline void clear_blocked_on_blocked(struct task_struct *p)
 {
 	if (!sched_proxy_exec())
 		return;
 
 	guard(raw_spinlock_irqsave)(&p->blocked_lock);
-	__set_blocked_on_runnable(p);
+	__clear_blocked_on_blocked(p);
 }
 
-static inline void __set_blocked_on_waking(struct task_struct *p)
+static inline void __clear_blocked_on_needs_return(struct task_struct *p)
 {
 	lockdep_assert_held(&p->blocked_lock);
 
-	if (p->blocked_on_state == BO_BLOCKED)
-		p->blocked_on_state = BO_WAKING;
+	p->blocked_on_state &= ~BO_NEEDS_RETURN;
+}
+
+static inline void clear_blocked_on_needs_return(struct task_struct *p)
+{
+	if (!sched_proxy_exec())
+		return;
+
+	guard(raw_spinlock_irqsave)(&p->blocked_lock);
+	__clear_blocked_on_needs_return(p);
+}
+
+static inline void __set_blocked_on_needs_return(struct task_struct *p)
+{
+	lockdep_assert_held(&p->blocked_lock);
+
+	WARN_ON(!(p->blocked_on_state & BO_BLOCKED));
+
+	p->blocked_on_state |= BO_NEEDS_RETURN;
+}
+static inline void set_blocked_on_needs_return(struct task_struct *p)
+{
+	guard(raw_spinlock_irqsave)(&p->blocked_lock);
+	__set_blocked_on_needs_return(p);
 }
 
 static inline void __set_task_blocked_on(struct task_struct *p, struct mutex *m)
@@ -2187,6 +2220,7 @@ static inline void __set_task_blocked_on(struct task_struct *p, struct mutex *m)
 	 * with a different mutex.
 	 */
 	WARN_ON_ONCE(p->blocked_on);
+	WARN_ON_ONCE(p->blocked_on_state != BO_RUNNABLE);
 	p->blocked_on = m;
 	p->blocked_on_state = BO_BLOCKED;
 }

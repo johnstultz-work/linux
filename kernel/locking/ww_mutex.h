@@ -287,12 +287,12 @@ __ww_mutex_die(struct MUTEX *lock, struct MUTEX_WAITER *waiter,
 		 /* nested as we should hold current->blocked_lock already */
 		raw_spin_lock_nested(&waiter->task->blocked_lock, SINGLE_DEPTH_NESTING);
 		/*
-		 * When waking up the task to die, be sure to set the
-		 * blocked_on_state to BO_WAKING. Otherwise we can see
+		 * When waking up the task to die, be sure to clear the
+		 * BO_BLOCKED flag in blocked_on_state. Otherwise we can see
 		 * circular blocked_on relationships that can't resolve.
 		 */
 		WARN_ON_ONCE(__get_task_blocked_on(waiter->task) != lock);
-		__set_blocked_on_waking(waiter->task);
+		__clear_blocked_on_blocked(waiter->task);
 		raw_spin_unlock(&waiter->task->blocked_lock);
 		wake_q_add(wake_q, waiter->task);
 	}
@@ -345,11 +345,11 @@ static bool __ww_mutex_wound(struct MUTEX *lock,
 			/* nested as we should hold current->blocked_lock already */
 			raw_spin_lock_nested(&owner->blocked_lock, SINGLE_DEPTH_NESTING);
 			/*
-			 * When waking up the task to wound, be sure to set the
-			 * blocked_on_state to BO_WAKING. Otherwise we can see
+			 * When waking up the task to wound, be sure to clear the
+			 * BO_BLOCKED state in blocked_on_state. Otherwise we can see
 			 * circular blocked_on relationships that can't resolve.
 			 */
-			__set_blocked_on_waking(owner);
+			__clear_blocked_on_blocked(owner);
 			raw_spin_unlock(&owner->blocked_lock);
 			wake_q_add(wake_q, owner);
 		}
