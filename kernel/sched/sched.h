@@ -2305,7 +2305,7 @@ static inline bool task_is_blocked(struct task_struct *p)
 
 static inline int task_on_cpu(struct rq *rq, struct task_struct *p)
 {
-	return p->on_cpu;
+	return READ_ONCE(p->on_cpu);
 }
 
 static inline int task_on_rq_queued(struct task_struct *p)
