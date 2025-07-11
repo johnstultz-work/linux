@@ -7010,6 +7010,8 @@ static bool try_to_block_task(struct rq *rq, struct task_struct *p,
 {
 	int flags = DEQUEUE_NOCLOCK;
 
+	WARN_ON_ONCE(p != current);
+
 	if (signal_pending_state(task_state, p)) {
 		WRITE_ONCE(p->__state, TASK_RUNNING);
 		return false;
