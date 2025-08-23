@@ -848,17 +848,17 @@ static void touch_core_sched_dispatch(struct rq *rq, struct task_struct *p)
 
 static void update_curr_scx(struct rq *rq)
 {
-	struct task_struct *curr = rq->curr;
+	struct task_struct *donor = rq->donor;
 	s64 delta_exec;
 
 	delta_exec = update_curr_common(rq);
 	if (unlikely(delta_exec <= 0))
 		return;
 
-	if (curr->scx.slice != SCX_SLICE_INF) {
-		curr->scx.slice -= min_t(u64, curr->scx.slice, delta_exec);
-		if (!curr->scx.slice)
-			touch_core_sched(rq, curr);
+	if (donor->scx.slice != SCX_SLICE_INF) {
+		donor->scx.slice -= min_t(u64, donor->scx.slice, delta_exec);
+		if (!donor->scx.slice)
+			touch_core_sched(rq, donor);
 	}
 }
 
@@ -1586,6 +1586,17 @@ static bool task_can_run_on_remote_rq(struct scx_sched *sch,
 				  cpu, p->comm, p->pid);
 		return false;
 	}
+
+	/* XXX: Revalidate this is necessary */
+	if (task_on_cpu(task_rq(p), p))
+		return false;
+
+	/* XXX: Revalidate this is needed/precise (donor should be blocked(checked below) or current) */
+	if (task_current_donor(task_rq(p), p))
+		return false;
+
+	if(task_is_blocked(p))
+		return false;
 
 	if (!scx_rq_online(rq)) {
 		if (enforce)
