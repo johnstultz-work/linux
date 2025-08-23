@@ -869,17 +869,17 @@ static void touch_core_sched_dispatch(struct rq *rq, struct task_struct *p)
 
 static void update_curr_scx(struct rq *rq)
 {
-	struct task_struct *curr = rq->curr;
+	struct task_struct *donor = rq->donor;
 	s64 delta_exec;
 
 	delta_exec = update_curr_common(rq);
 	if (unlikely(delta_exec <= 0))
 		return;
 
-	if (curr->scx.slice != SCX_SLICE_INF) {
-		curr->scx.slice -= min_t(u64, curr->scx.slice, delta_exec);
-		if (!curr->scx.slice)
-			touch_core_sched(rq, curr);
+	if (donor->scx.slice != SCX_SLICE_INF) {
+		donor->scx.slice -= min_t(u64, donor->scx.slice, delta_exec);
+		if (!donor->scx.slice)
+			touch_core_sched(rq, donor);
 	}
 }
 
@@ -1007,14 +1007,14 @@ static void dispatch_enqueue(struct scx_sched *sch, struct scx_dispatch_q *dsq,
 		struct rq *rq = container_of(dsq, struct rq, scx.local_dsq);
 		bool preempt = false;
 
-		if ((enq_flags & SCX_ENQ_PREEMPT) && p != rq->curr &&
-		    rq->curr->sched_class == &ext_sched_class) {
-			rq->curr->scx.slice = 0;
+		if ((enq_flags & SCX_ENQ_PREEMPT) && p != rq->donor &&
+		    rq->donor->sched_class == &ext_sched_class) {
+			rq->donor->scx.slice = 0;
 			preempt = true;
 		}
 
 		if (preempt || sched_class_above(&ext_sched_class,
-						 rq->curr->sched_class))
+						 rq->donor->sched_class))
 			resched_curr(rq);
 	} else {
 		raw_spin_unlock(&dsq->lock);
@@ -1614,6 +1614,17 @@ static bool task_can_run_on_remote_rq(struct scx_sched *sch,
 		return false;
 	}
 
+	/* XXX: Revalidate this is necessary */
+	if (task_on_cpu(task_rq(p), p))
+		return false;
+
+	/* XXX: Revalidate this is needed/precise (donor should be blocked(checked below) or current) */
+	if (task_current_donor(task_rq(p), p))
+		return false;
+
+	if(task_is_blocked(p))
+		return false;
+
 	return true;
 }
 
@@ -1916,7 +1927,7 @@ static void dispatch_to_local_dsq(struct scx_sched *sch, struct rq *rq,
 		}
 
 		/* if the destination CPU is idle, wake it up */
-		if (sched_class_above(p->sched_class, dst_rq->curr->sched_class))
+		if (sched_class_above(p->sched_class, dst_rq->donor->sched_class))
 			resched_curr(dst_rq);
 	}
 
@@ -2178,7 +2189,7 @@ static int balance_scx(struct rq *rq, struct rq_flags *rf)
 
 		for_each_cpu_andnot(scpu, smt_mask, cpumask_of(cpu_of(rq))) {
 			struct rq *srq = cpu_rq(scpu);
-			struct task_struct *sprev = srq->curr;
+			struct task_struct *sprev = srq->donor;
 
 			WARN_ON_ONCE(__rq_lockp(rq) != __rq_lockp(srq));
 			update_rq_clock(srq);
@@ -2374,7 +2385,7 @@ static struct task_struct *first_local_task(struct rq *rq)
 
 static struct task_struct *pick_task_scx(struct rq *rq)
 {
-	struct task_struct *prev = rq->curr;
+	struct task_struct *prev = rq->donor;
 	struct task_struct *p;
 	bool keep_prev = rq->scx.flags & SCX_RQ_BAL_KEEP;
 	bool kick_idle = false;
@@ -3043,7 +3054,7 @@ int scx_check_setscheduler(struct task_struct *p, int policy)
 #ifdef CONFIG_NO_HZ_FULL
 bool scx_can_stop_tick(struct rq *rq)
 {
-	struct task_struct *p = rq->curr;
+	struct task_struct *p = rq->donor;
 
 	if (scx_rq_bypassing(rq))
 		return false;
