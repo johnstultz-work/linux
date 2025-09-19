@@ -134,7 +134,9 @@ static void check_hung_task(struct task_struct *t, unsigned long timeout)
 			sysctl_hung_task_warnings--;
 		pr_err("INFO: task %s:%d blocked for more than %ld seconds.\n",
 		       t->comm, t->pid, (jiffies - t->last_switch_time) / HZ);
+#ifdef CONFIG_SCHED_PROXY_EXEC
 		pr_err("     on_rq: %i rq: %i state: 0x%x  bo_state: %i\n", t->on_rq, task_rq(t) ? cpu_of(task_rq(t)):-1, t->__state, t->blocked_on_state);
+#endif
 		pr_err("      %s %s %.*s\n",
 			print_tainted(), init_utsname()->release,
 			(int)strcspn(init_utsname()->version, " "),
@@ -219,7 +221,9 @@ static void check_hung_uninterruptible_tasks(unsigned long timeout)
 	if (hung_task_show_lock) {
 		pr_err("Dumping all tasks:====\n");
 		for_each_process_thread(g, t) {
+#ifdef CONFIG_SCHED_PROXY_EXEC
 			pr_err("task %s:%d , on_rq: %i sched_delay: %i rq: %i state: 0x%x  bo_state: %i\n", t->comm, t->pid, t->on_rq, t->se.sched_delayed, task_rq(t) ? cpu_of(task_rq(t)):-1, t->__state, t->blocked_on_state);
+#endif
 			sched_show_task(t);
 		}
 	}
