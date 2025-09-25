@@ -628,7 +628,7 @@ __mutex_lock_common(struct mutex *lock, unsigned int state, unsigned int subclas
 	}
 
 	raw_spin_lock(&current->blocked_lock);
-	__set_task_blocked_on(current, lock);
+	__set_task_blocked_on(current, lock, BO_T_MUTEX);
 	set_current_state(state);
 	trace_contention_begin(lock, LCB_F_MUTEX);
 	for (;;) {

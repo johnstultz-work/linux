@@ -2283,7 +2283,7 @@ static inline bool task_is_blocked(struct task_struct *p)
 	if (!sched_proxy_exec())
 		return false;
 
-	return !!p->blocked_on && p->blocked_on_state != BO_RUNNABLE;
+	return !!p->blocked_on.lock && p->blocked_on_state != BO_RUNNABLE;
 }
 #else
 static inline bool task_is_blocked(struct task_struct *p) { return false; }
