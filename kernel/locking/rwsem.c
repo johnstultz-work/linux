@@ -286,6 +286,23 @@ rwsem_owner_flags(struct rw_semaphore *sem, unsigned long *pflags)
 }
 
 /*
+ * Return the task struct pointer of the owner if it's a writer,
+ * NULL otherwise.
+ */
+struct task_struct *rwsem_writer_owner(struct rw_semaphore *sem)
+{
+	struct task_struct *owner;
+	long count, flags;
+
+	count = atomic_long_read(&sem->count);
+	owner = rwsem_owner_flags(sem, &flags);
+	if (!(count & RWSEM_WRITER_MASK) || (flags & (RWSEM_READER_OWNED |
+	    RWSEM_NONSPINNABLE)))
+		return NULL;
+	return owner;
+}
+
+/*
  * Guide to the rw_semaphore's count field.
  *
  * When the RWSEM_WRITER_LOCKED bit in count is set, the lock is owned
@@ -431,6 +448,14 @@ static void rwsem_mark_wake(struct rw_semaphore *sem,
 			 * Readers, on the other hand, will block as they
 			 * will notice the queued writer.
 			 */
+			raw_spin_lock(&waiter->task->blocked_lock);
+			/*
+			 * We also get here if sem was reader owned and thus
+			 * waiter isn't blocked_on, but this function only sets
+			 * PROXY_WAKING if it is.
+			 */
+			__set_task_blocked_on_waking(waiter->task, sem);
+			raw_spin_unlock(&waiter->task->blocked_lock);
 			wake_q_add(wake_q, waiter->task);
 			lockevent_inc(rwsem_wake_writer);
 		}
@@ -1106,6 +1131,7 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 {
 	struct rwsem_waiter waiter;
 	DEFINE_WAKE_Q(wake_q);
+	bool blocked_on_set;
 
 	/* do optimistic spinning and steal lock if possible */
 	if (rwsem_can_spin_on_owner(sem) && rwsem_optimistic_spin(sem)) {
@@ -1142,9 +1168,15 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 		atomic_long_or(RWSEM_FLAG_WAITERS, &sem->count);
 	}
 
+	raw_spin_lock(&current->blocked_lock);
 	/* wait until we successfully acquire the lock */
 	set_current_state(state);
 	trace_contention_begin(sem, LCB_F_WRITE);
+	blocked_on_set = false;
+	if (atomic_long_read(&sem->count) & RWSEM_WRITER_MASK) {
+		__set_task_blocked_on(current, sem, BO_T_RWSEM);
+		blocked_on_set = true;
+	}
 
 	for (;;) {
 		if (rwsem_try_write_lock(sem, &waiter)) {
@@ -1152,6 +1184,9 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 			break;
 		}
 
+		if (blocked_on_set && !__get_task_blocked_on(current))
+			__set_task_blocked_on(current, sem, BO_T_RWSEM);
+		raw_spin_unlock(&current->blocked_lock);
 		raw_spin_unlock_irq(&sem->wait_lock);
 
 		if (signal_pending_state(state, current))
@@ -1178,8 +1213,14 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 		set_current_state(state);
 trylock_again:
 		raw_spin_lock_irq(&sem->wait_lock);
+		raw_spin_lock(&current->blocked_lock);
+		if (blocked_on_set)
+			__clear_task_blocked_on(current, sem);
 	}
 	__set_current_state(TASK_RUNNING);
+	if (blocked_on_set)
+		__clear_task_blocked_on(current, sem);
+	raw_spin_unlock(&current->blocked_lock);
 	raw_spin_unlock_irq(&sem->wait_lock);
 	lockevent_inc(rwsem_wlock);
 	trace_contention_end(sem, 0);
@@ -1187,6 +1228,8 @@ trylock_again:
 
 out_nolock:
 	__set_current_state(TASK_RUNNING);
+	if (blocked_on_set)
+		clear_task_blocked_on(current, sem);
 	raw_spin_lock_irq(&sem->wait_lock);
 	rwsem_del_wake_waiter(sem, &waiter, &wake_q);
 	lockevent_inc(rwsem_wlock_fail);
