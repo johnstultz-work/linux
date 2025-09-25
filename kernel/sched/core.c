@@ -159,6 +159,8 @@ static inline struct task_struct *__blocked_on_owner(struct blocked_on_lock *bo)
 		return NULL;
 	case BO_T_MUTEX:
 		return __mutex_owner(bo->lock);
+	case BO_T_RWSEM:
+		return rwsem_writer_owner(bo->lock);
 	default:
 		BUG();
 	}
@@ -7231,6 +7233,8 @@ lock_blocked_on_lock(struct blocked_on_lock *bo)
 {
 	if (bo->type == BO_T_MUTEX)
 		raw_spin_lock(&((struct mutex *)bo->lock)->wait_lock);
+	else if (bo->type == BO_T_RWSEM)
+		raw_spin_lock(&((struct rw_semaphore *)bo->lock)->wait_lock);
 	else
 		BUG();
 }
@@ -7241,6 +7245,8 @@ unlock_blocked_on_lock(struct blocked_on_lock *bo)
 {
 	if (bo->type == BO_T_MUTEX)
 		raw_spin_unlock(&((struct mutex *)bo->lock)->wait_lock);
+	else if (bo->type == BO_T_RWSEM)
+		raw_spin_unlock(&((struct rw_semaphore *)bo->lock)->wait_lock);
 	else
 		BUG();
 }

@@ -826,6 +826,7 @@ struct kmap_ctrl {
 enum blocked_on_type {
 	BO_T_NONE,
 	BO_T_MUTEX,
+	BO_T_RWSEM,
 };
 
 struct blocked_on_lock {
