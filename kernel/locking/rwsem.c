@@ -588,6 +588,14 @@ static void rwsem_mark_wake(struct rw_semaphore *sem,
 		 * after setting the reader waiter to nil.
 		 */
 		wake_q_add_safe(wake_q, tsk);
+		raw_spin_lock(&tsk->blocked_lock);
+		/*
+		 * We also get here if sem was reader owned and thus
+		 * waiter isn't blocked_on, but this function only sets
+		 * PROXY_WAKING if we are.
+		 */
+		__set_task_blocked_on_waking(tsk, sem);
+		raw_spin_unlock(&tsk->blocked_lock);
 	}
 }
 
@@ -1021,6 +1029,7 @@ rwsem_down_read_slowpath(struct rw_semaphore *sem, long count, unsigned int stat
 	long rcnt = (count >> RWSEM_READER_SHIFT);
 	struct rwsem_waiter waiter;
 	DEFINE_WAKE_Q(wake_q);
+	bool blocked_on_set;
 
 	/*
 	 * To prevent a constant stream of readers from starving a sleeping
@@ -1094,8 +1103,17 @@ queue:
 	if (state == TASK_UNINTERRUPTIBLE)
 		hung_task_set_blocker(sem, BLOCKER_TYPE_RWSEM_READER);
 
+	blocked_on_set = false;
 	/* wait to be given the lock */
 	for (;;) {
+		if (atomic_long_read(&sem->count) & RWSEM_WRITER_MASK) {
+			raw_spin_lock_irq(&current->blocked_lock);
+			/* PROXY_WAKE might have been set */
+			__clear_task_blocked_on(current, sem);
+			__set_task_blocked_on(current, sem, BO_T_RWSEM);
+			raw_spin_unlock_irq(&current->blocked_lock);
+			blocked_on_set = true;
+		}
 		if (!smp_load_acquire(&waiter.task)) {
 			/* Matches rwsem_mark_wake()'s smp_store_release(). */
 			break;
@@ -1117,6 +1135,8 @@ queue:
 		hung_task_clear_blocker();
 
 	__set_current_state(TASK_RUNNING);
+	if (blocked_on_set)
+		clear_task_blocked_on(current, sem);
 	lockevent_inc(rwsem_rlock);
 	trace_contention_end(sem, 0);
 	return sem;
@@ -1124,6 +1144,8 @@ queue:
 out_nolock:
 	rwsem_del_wake_waiter(sem, &waiter, &wake_q);
 	__set_current_state(TASK_RUNNING);
+	if (blocked_on_set)
+		clear_task_blocked_on(current, sem);
 	lockevent_inc(rwsem_rlock_fail);
 	trace_contention_end(sem, -EINTR);
 	return ERR_PTR(-EINTR);
