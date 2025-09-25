@@ -287,6 +287,23 @@ rwsem_owner_flags(struct rw_semaphore *sem, unsigned long *pflags)
 }
 
 /*
+ * Return the task struct pointer of the owner if it's a writer,
+ * NULL otherwise.
+ */
+struct task_struct *rwsem_writer_owner(struct rw_semaphore *sem)
+{
+	struct task_struct *owner;
+	long count, flags;
+
+	count = atomic_long_read(&sem->count);
+	owner = rwsem_owner_flags(sem, &flags);
+	if (!(count & RWSEM_WRITER_MASK) || (flags & (RWSEM_READER_OWNED |
+	    RWSEM_NONSPINNABLE)))
+		return NULL;
+	return owner;
+}
+
+/*
  * Guide to the rw_semaphore's count field.
  *
  * When the RWSEM_WRITER_LOCKED bit in count is set, the lock is owned
@@ -432,6 +449,23 @@ static void rwsem_mark_wake(struct rw_semaphore *sem,
 			 * Readers, on the other hand, will block as they
 			 * will notice the queued writer.
 			 */
+			/*
+			 * XXX use current->blocked_donor to find highest
+			 * priority waiter who's boosting us?
+			 */
+			/*
+			 * blocked_lock can be nested if we get here from
+			 * rwsem_down_write_slowpath -> rwsem_cond_wake_waiter
+			 */
+			raw_spin_lock_nested(&waiter->task->blocked_lock,
+			    SINGLE_DEPTH_NESTING);
+			/*
+			 * We also get here if sem was reader owned and thus
+			 * waiter isn't BO_BLOCKED, but this function
+			 * only sets BO_WAKING if we are BO_BLOCKED.
+			 */
+			__set_blocked_on_waking(waiter->task);
+			raw_spin_unlock(&waiter->task->blocked_lock);
 			wake_q_add(wake_q, waiter->task);
 			lockevent_inc(rwsem_wake_writer);
 		}
@@ -1112,6 +1146,7 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 {
 	struct rwsem_waiter waiter;
 	DEFINE_WAKE_Q(wake_q);
+	bool blocked_on_set;
 
 	/* do optimistic spinning and steal lock if possible */
 	if (rwsem_can_spin_on_owner(sem) && rwsem_optimistic_spin(sem)) {
@@ -1129,6 +1164,7 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 	waiter.handoff_set = false;
 
 	raw_spin_lock_irq(&sem->wait_lock);
+	raw_spin_lock(&current->blocked_lock);
 	rwsem_add_waiter(sem, &waiter);
 
 	/* we're now waiting on the lock */
@@ -1140,9 +1176,11 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 			 * We want to minimize wait_lock hold time especially
 			 * when a large number of readers are to be woken up.
 			 */
+			raw_spin_unlock(&current->blocked_lock);
 			raw_spin_unlock_irq(&sem->wait_lock);
 			wake_up_q(&wake_q);
 			raw_spin_lock_irq(&sem->wait_lock);
+			raw_spin_lock(&current->blocked_lock);
 		}
 	} else {
 		atomic_long_or(RWSEM_FLAG_WAITERS, &sem->count);
@@ -1151,6 +1189,11 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 	/* wait until we successfully acquire the lock */
 	set_current_state(state);
 	trace_contention_begin(sem, LCB_F_WRITE);
+	blocked_on_set = false;
+	if (atomic_long_read(&sem->count) & RWSEM_WRITER_MASK) {
+		__set_task_blocked_on(current, sem, BO_T_RWSEM);
+		blocked_on_set = true;
+	}
 
 	if (state == TASK_UNINTERRUPTIBLE)
 		hung_task_set_blocker(sem, BLOCKER_TYPE_RWSEM_WRITER);
@@ -1161,6 +1204,9 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 			break;
 		}
 
+		if (blocked_on_set)
+			__force_blocked_on_blocked(current);
+		raw_spin_unlock(&current->blocked_lock);
 		raw_spin_unlock_irq(&sem->wait_lock);
 
 		if (signal_pending_state(state, current))
@@ -1187,12 +1233,16 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 		set_current_state(state);
 trylock_again:
 		raw_spin_lock_irq(&sem->wait_lock);
+		raw_spin_lock(&current->blocked_lock);
 	}
 
 	if (state == TASK_UNINTERRUPTIBLE)
 		hung_task_clear_blocker();
 
 	__set_current_state(TASK_RUNNING);
+	if (blocked_on_set)
+		__clear_task_blocked_on(current, sem);
+	raw_spin_unlock(&current->blocked_lock);
 	raw_spin_unlock_irq(&sem->wait_lock);
 	lockevent_inc(rwsem_wlock);
 	trace_contention_end(sem, 0);
@@ -1200,6 +1250,9 @@ trylock_again:
 
 out_nolock:
 	__set_current_state(TASK_RUNNING);
+	if (blocked_on_set)
+		__clear_task_blocked_on(current, sem);
+	raw_spin_unlock(&current->blocked_lock);
 	raw_spin_lock_irq(&sem->wait_lock);
 	rwsem_del_wake_waiter(sem, &waiter, &wake_q);
 	lockevent_inc(rwsem_wlock_fail);
