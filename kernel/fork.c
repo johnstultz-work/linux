@@ -2129,7 +2129,7 @@ __latent_entropy struct task_struct *copy_process(
 	lockdep_init_task(p);
 #endif
 
-	p->blocked_on = NULL; /* not blocked yet */
+	p->blocked_on.lock = NULL; /* not blocked yet */
 	p->blocked_donor = NULL; /* nobody is boosting p yet */
 #ifdef CONFIG_SCHED_PROXY_EXEC
 	p->blocked_on_state = BO_RUNNABLE;
