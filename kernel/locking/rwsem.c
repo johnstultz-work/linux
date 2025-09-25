@@ -597,6 +597,15 @@ static void rwsem_mark_wake(struct rw_semaphore *sem,
 		 * after setting the reader waiter to nil.
 		 */
 		wake_q_add_safe(wake_q, tsk);
+		/* XXX nested? */
+		raw_spin_lock_nested(&tsk->blocked_lock, SINGLE_DEPTH_NESTING);
+		/*
+		 * We also get here if sem was reader owned and thus
+		 * waiter isn't BO_BLOCKED, but this function
+		 * only sets BO_WAKING if we are BO_BLOCKED.
+		 */
+		__set_blocked_on_waking(tsk);
+		raw_spin_unlock(&tsk->blocked_lock);
 	}
 }
 
@@ -1030,6 +1039,7 @@ rwsem_down_read_slowpath(struct rw_semaphore *sem, long count, unsigned int stat
 	long rcnt = (count >> RWSEM_READER_SHIFT);
 	struct rwsem_waiter waiter;
 	DEFINE_WAKE_Q(wake_q);
+	bool blocked_on_set;
 
 	/*
 	 * To prevent a constant stream of readers from starving a sleeping
@@ -1092,6 +1102,13 @@ queue:
 	count = atomic_long_add_return(adjustment, &sem->count);
 
 	rwsem_cond_wake_waiter(sem, count, &wake_q);
+	blocked_on_set = false;
+	if (atomic_long_read(&sem->count) & RWSEM_WRITER_MASK) {
+		raw_spin_lock(&current->blocked_lock);
+		__set_task_blocked_on(current, sem, BO_T_RWSEM);
+		raw_spin_unlock(&current->blocked_lock);
+		blocked_on_set = true;
+	}
 	raw_spin_unlock_irq(&sem->wait_lock);
 
 	if (!wake_q_empty(&wake_q))
@@ -1105,6 +1122,16 @@ queue:
 
 	/* wait to be given the lock */
 	for (;;) {
+		/* XXX do we need sem->wait_lock ? */
+		if (atomic_long_read(&sem->count) & RWSEM_WRITER_MASK) {
+			raw_spin_lock_irq(&current->blocked_lock);
+			if (blocked_on_set)
+				__force_blocked_on_blocked(current);
+			else
+				__set_task_blocked_on(current, sem, BO_T_RWSEM);
+			raw_spin_unlock_irq(&current->blocked_lock);
+			blocked_on_set = true;
+		}
 		if (!smp_load_acquire(&waiter.task)) {
 			/* Matches rwsem_mark_wake()'s smp_store_release(). */
 			break;
@@ -1126,6 +1153,8 @@ queue:
 		hung_task_clear_blocker();
 
 	__set_current_state(TASK_RUNNING);
+	if (blocked_on_set)
+		clear_task_blocked_on(current, sem);
 	lockevent_inc(rwsem_rlock);
 	trace_contention_end(sem, 0);
 	return sem;
@@ -1133,6 +1162,8 @@ queue:
 out_nolock:
 	rwsem_del_wake_waiter(sem, &waiter, &wake_q);
 	__set_current_state(TASK_RUNNING);
+	if (blocked_on_set)
+		clear_task_blocked_on(current, sem);
 	lockevent_inc(rwsem_rlock_fail);
 	trace_contention_end(sem, -EINTR);
 	return ERR_PTR(-EINTR);
