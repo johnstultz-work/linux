@@ -930,6 +930,7 @@ static noinline void __sched __mutex_unlock_slowpath(struct mutex *lock, unsigne
 	DEFINE_WAKE_Q(wake_q);
 	unsigned long owner;
 	unsigned long flags;
+	bool handoff_preempt = false;
 
 	mutex_release(&lock->dep_map, ip);
 
@@ -983,6 +984,7 @@ static noinline void __sched __mutex_unlock_slowpath(struct mutex *lock, unsigne
 				__set_task_blocked_on_waking(donor, next_lock);
 				wake_q_add(&wake_q, donor);
 				current->blocked_donor = NULL;
+				handoff_preempt = true;
 			}
 			raw_spin_unlock(&donor->blocked_lock);
 		}
@@ -1013,6 +1015,9 @@ static noinline void __sched __mutex_unlock_slowpath(struct mutex *lock, unsigne
 	if (sched_proxy_exec())
 		raw_spin_unlock(&current->blocked_lock);
 	raw_spin_unlock_irqrestore_wake(&lock->wait_lock, flags, &wake_q);
+	/* If we were proxying, preempt to allow us to switch to donor */
+	if (handoff_preempt)
+		preempt_schedule();
 }
 
 #ifndef CONFIG_DEBUG_LOCK_ALLOC
