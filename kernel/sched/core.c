@@ -6874,6 +6874,7 @@ static void __sched notrace __schedule(int sched_mode)
 	}
 
 pick_again:
+	assert_balance_callbacks_empty(rq);
 	next = pick_next_task(rq, rq->donor, &rf);
 	rq_set_donor(rq, next);
 	if (sched_proxy_exec()) {
