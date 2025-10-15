@@ -1734,6 +1734,17 @@ struct rq_flags {
 
 extern struct balance_callback balance_push_callback;
 
+#ifdef CONFIG_SMP
+static inline void assert_balance_callbacks_empty(struct rq *rq)
+{
+	WARN_ON_ONCE(IS_ENABLED(CONFIG_PROVE_LOCKING) &&
+		     rq->balance_callback &&
+		     rq->balance_callback != &balance_push_callback);
+}
+#else
+static inline void assert_balance_callbacks_empty(struct rq *rq) {}
+#endif
+
 /*
  * Lockdep annotation that avoids accidental unlocks; it's like a
  * sticky/continuous lockdep_assert_held().
@@ -1752,7 +1763,7 @@ static inline void rq_pin_lock(struct rq *rq, struct rq_flags *rf)
 	rq->clock_update_flags &= (RQCF_REQ_SKIP|RQCF_ACT_SKIP);
 	rf->clock_update_flags = 0;
 # ifdef CONFIG_SMP
-	SCHED_WARN_ON(rq->balance_callback && rq->balance_callback != &balance_push_callback);
+	assert_balance_callbacks_empty(rq);
 # endif
 #endif
 }
