@@ -3697,6 +3697,56 @@ static inline void proxy_set_task_cpu(struct task_struct *p, int cpu)
 	__set_task_cpu(p, cpu);
 	p->wake_cpu = wake_cpu;
 }
+
+static bool proxy_task_runnable_but_waking(struct task_struct *p)
+{
+	if (!sched_proxy_exec())
+		return false;
+	return (READ_ONCE(p->__state) == TASK_RUNNING &&
+		READ_ONCE(p->blocked_on) == PROXY_WAKING);
+}
+
+static inline struct task_struct *proxy_resched_idle(struct rq *rq);
+
+/*
+ * Checks to see if task p has been proxy-migrated to another rq
+ * and needs to be returned. If so, we deactivate the task here
+ * so that it can be properly woken up on the p->wake_cpu
+ * (or whichever cpu select_task_rq() picks at the bottom of
+ * try_to_wake_up()
+ */
+static inline bool proxy_needs_return(struct rq *rq, struct task_struct *p)
+{
+	bool ret = false;
+
+	if (!sched_proxy_exec())
+		return false;
+
+	raw_spin_lock(&p->blocked_lock);
+	if (p->blocked_on == PROXY_WAKING) {
+		if (!task_current(rq, p) && p->wake_cpu != cpu_of(rq)) {
+			if (task_current_donor(rq, p))
+				proxy_resched_idle(rq);
+
+			deactivate_task(rq, p, DEQUEUE_NOCLOCK);
+			ret = true;
+		}
+		__clear_task_blocked_on(p, PROXY_WAKING);
+		resched_curr(rq);
+	}
+	raw_spin_unlock(&p->blocked_lock);
+	return ret;
+}
+#else /* !CONFIG_SCHED_PROXY_EXEC */
+static bool proxy_task_runnable_but_waking(struct task_struct *p)
+{
+	return false;
+}
+
+static inline bool proxy_needs_return(struct rq *rq, struct task_struct *p)
+{
+	return false;
+}
 #endif /* CONFIG_SCHED_PROXY_EXEC */
 
 static void
@@ -3784,6 +3834,8 @@ static int ttwu_runnable(struct task_struct *p, int wake_flags)
 		update_rq_clock(rq);
 		if (p->se.sched_delayed)
 			enqueue_task(rq, p, ENQUEUE_NOCLOCK | ENQUEUE_DELAYED);
+		if (proxy_needs_return(rq, p))
+			goto out;
 		if (!task_on_cpu(rq, p)) {
 			/*
 			 * When on_rq && !on_cpu the task is preempted, see if
@@ -3794,6 +3846,7 @@ static int ttwu_runnable(struct task_struct *p, int wake_flags)
 		ttwu_do_wakeup(p);
 		ret = 1;
 	}
+out:
 	__task_rq_unlock(rq, &rf);
 
 	return ret;
@@ -3923,6 +3976,14 @@ static inline bool ttwu_queue_cond(struct task_struct *p, int cpu)
 	if (p->sched_class == &stop_sched_class)
 		return false;
 #endif
+
+	/*
+	 * If we're PROXY_WAKING, we have deactivated on this cpu, so we should
+	 * activate it here as well, to avoid IPI'ing a cpu that is stuck in
+	 * task_rq_lock() spinning on p->on_rq, deadlocking that cpu.
+	 */
+	if (task_on_rq_migrating(p))
+		return false;
 
 	/*
 	 * Do not complicate things with the async wake_list while the CPU is
@@ -4181,6 +4242,8 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 		 *    it disabling IRQs (this allows not taking ->pi_lock).
 		 */
 		WARN_ON_ONCE(p->se.sched_delayed);
+		/* If p is current, we know we can run here, so clear blocked_on */
+		clear_task_blocked_on(p, NULL);
 		if (!ttwu_state_match(p, state, &success))
 			goto out;
 
@@ -4197,8 +4260,15 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	 */
 	scoped_guard (raw_spinlock_irqsave, &p->pi_lock) {
 		smp_mb__after_spinlock();
-		if (!ttwu_state_match(p, state, &success))
-			break;
+		if (!ttwu_state_match(p, state, &success)) {
+			/*
+			 * If we're already TASK_RUNNING, and PROXY_WAKING
+			 * continue on to ttwu_runnable check to force
+			 * proxy_needs_return evaluation
+			 */
+			if (!proxy_task_runnable_but_waking(p))
+				break;
+		}
 
 		trace_sched_waking(p);
 
