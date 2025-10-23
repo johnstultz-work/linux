@@ -4069,7 +4069,7 @@ static inline bool proxy_needs_return(struct rq *rq, struct task_struct *p)
 		return false;
 
 	raw_spin_lock(&p->blocked_lock);
-	if (p->blocked_on.lock == PROXY_WAKING) {
+	if (p->blocked_on.lock) {
 		if (!task_current(rq, p) && p->wake_cpu != cpu_of(rq)) {
 			if (task_current_donor(rq, p))
 				proxy_resched_idle(rq);
@@ -4077,7 +4077,7 @@ static inline bool proxy_needs_return(struct rq *rq, struct task_struct *p)
 			deactivate_task(rq, p, DEQUEUE_NOCLOCK);
 			ret = true;
 		}
-		__clear_task_blocked_on(p, PROXY_WAKING);
+		__clear_task_blocked_on(p, NULL);
 		resched_curr(rq);
 	}
 	raw_spin_unlock(&p->blocked_lock);
