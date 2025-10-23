@@ -2200,7 +2200,15 @@ static inline void __set_task_blocked_on(struct task_struct *p, void *m,
 	 * with a different mutex. Note, setting it to the same
 	 * lock repeatedly is ok.
 	 */
-	WARN_ON_ONCE(p->blocked_on.lock && p->blocked_on.lock != m);
+	if (p->blocked_on.lock && p->blocked_on.lock != m) {
+		     printk_deferred("JDB: %s: %pS: ERRR %s %d  already: %p but given: %p\n", __func__, __builtin_return_address(0), p->comm, p->pid, p->blocked_on.lock, m);
+		     trace_printk("JDB: %s: %pS: ERRR %s %d  already: %p but given: %p\n", __func__, __builtin_return_address(0), p->comm, p->pid, p->blocked_on.lock, m);
+		     BUG();
+	}
+	WARN_ONCE(p->blocked_on.lock && p->blocked_on.lock != m,
+		     "JDB: %s: %s %d  already: %p but given: %p\n", __func__, p->comm, p->pid, p->blocked_on.lock, m);
+	
+	trace_printk("JDB: %s: %pS %s %d setting from %p to %p\n", __func__, __builtin_return_address(0), p->comm, p->pid, p->blocked_on.lock, m);
 	p->blocked_on.lock = m;
 	p->blocked_on.type = type;
 }
@@ -2214,8 +2222,16 @@ static inline void __clear_task_blocked_on(struct task_struct *p, void *m)
 	 * blocked_on relationships, but make sure we are not
 	 * clearing the relationship with a different lock.
 	 */
-	WARN_ON_ONCE(m && p->blocked_on.lock &&
-		     p->blocked_on.lock != m && p->blocked_on.lock != PROXY_WAKING);
+	if (m && p->blocked_on.lock &&
+		     p->blocked_on.lock != m && p->blocked_on.lock != PROXY_WAKING) {
+		     trace_printk("JDB: %s: %pS ERRR %s %d  expected: %p but given: %p\n", __func__, __builtin_return_address(0), p->comm, p->pid, p->blocked_on.lock, m);
+		     printk_deferred("JDB: %s: %pS ERRR %s %d  expected: %p but given: %p\n", __func__, __builtin_return_address(0), p->comm, p->pid, p->blocked_on.lock, m);
+		BUG();
+	}
+	WARN_ONCE(m && p->blocked_on.lock &&
+		     p->blocked_on.lock != m && p->blocked_on.lock != PROXY_WAKING,
+		     "JDB: %s: %s %d  expected: %p but given: %p\n", __func__, p->comm, p->pid, p->blocked_on.lock, m);
+	trace_printk("JDB: %s: %pS: %s %d clearing from %p to NULL\n", __func__, __builtin_return_address(0), p->comm, p->pid, p->blocked_on.lock);
 	p->blocked_on.lock = NULL;
 	p->blocked_on.type = BO_T_NONE;
 }
@@ -2244,7 +2260,14 @@ static inline void __set_task_blocked_on_waking(struct task_struct *p, void *m)
 	 * already set to waking, but make sure we are not changing
 	 * the relationship with a different lock.
 	 */
-	WARN_ON_ONCE(m && p->blocked_on.lock != m && p->blocked_on.lock != PROXY_WAKING);
+	if (m && p->blocked_on.lock != m && p->blocked_on.lock != PROXY_WAKING) {
+		     printk_deferred("JDB: %s: %pS ERRR %s %d  expected: %p but given: %p\n", __func__, __builtin_return_address(0), p->comm, p->pid, p->blocked_on.lock, m);
+		     trace_printk("JDB: %s: %pS ERRR %s %d  expected: %p but given: %p\n", __func__, __builtin_return_address(0), p->comm, p->pid, p->blocked_on.lock, m);
+		     BUG();
+	}
+	WARN_ONCE(m && p->blocked_on.lock != m && p->blocked_on.lock != PROXY_WAKING,
+		     "JDB: %s: %s %d  expected: %p but given: %p\n", __func__, p->comm, p->pid, p->blocked_on.lock, m);
+	trace_printk("JDB: %s: %pS  %s %d setting from %p to WAKING\n", __func__, __builtin_return_address(0), p->comm, p->pid, p->blocked_on.lock);
 	p->blocked_on.lock = PROXY_WAKING;
 }
 
