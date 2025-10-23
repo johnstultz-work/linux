@@ -1211,6 +1211,7 @@ s64 update_curr_common(struct rq *rq)
 {
 	return update_se(rq, &rq->donor->se);
 }
+#include <linux/delay.h>
 
 /*
  * Update the current task's runtime statistics.
@@ -1231,6 +1232,7 @@ static void update_curr(struct cfs_rq *cfs_rq)
 	if (unlikely(!curr))
 		return;
 
+	udelay(cpu_of(rq)*10);
 	delta_exec = update_se(rq, curr);
 	if (unlikely(delta_exec <= 0))
 		return;
