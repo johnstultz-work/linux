@@ -4096,11 +4096,11 @@ static inline bool proxy_needs_return(struct rq *rq, struct task_struct *p)
 
 	guard(raw_spinlock)(&p->blocked_lock);
 
-	/* If task isn't PROXY_WAKING, we don't need to do return migration */
-	if (p->blocked_on.lock != PROXY_WAKING)
+	/* If task isn't blocked_on, we don't need to do return migration */
+	if (!p->blocked_on.lock)
 		return false;
 
-	__clear_task_blocked_on(p, PROXY_WAKING);
+	__clear_task_blocked_on(p, NULL);
 
 	/* If already current, don't need to return migrate */
 	if (task_current(rq, p))
