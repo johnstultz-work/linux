@@ -8713,7 +8713,7 @@ static void set_cpus_allowed_fair(struct task_struct *p, struct affinity_context
 }
 
 static int
-balance_fair(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
+balance_fair(struct rq *rq, struct rq_flags *rf)
 {
 	if (sched_fair_runnable(rq))
 		return 1;
@@ -8866,13 +8866,18 @@ static void __set_next_task_fair(struct rq *rq, struct task_struct *p, bool firs
 static void set_next_task_fair(struct rq *rq, struct task_struct *p, bool first);
 
 struct task_struct *
-pick_next_task_fair(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
+pick_next_task_fair(struct rq *rq, struct rq_flags *rf)
 {
 	struct sched_entity *se;
-	struct task_struct *p;
+	struct task_struct *p, *prev;
 	int new_tasks;
 
 again:
+	/*
+	 * Re-read rq->donor at the top as it may have
+	 * changed across a rq lock drop
+	 */
+	prev = rq->donor;
 	p = pick_task_fair(rq);
 	if (!p)
 		goto idle;
@@ -8952,9 +8957,9 @@ idle:
 	return NULL;
 }
 
-static struct task_struct *__pick_next_task_fair(struct rq *rq, struct task_struct *prev)
+static struct task_struct *__pick_next_task_fair(struct rq *rq)
 {
-	return pick_next_task_fair(rq, prev, NULL);
+	return pick_next_task_fair(rq, NULL);
 }
 
 static struct task_struct *fair_server_pick_task(struct sched_dl_entity *dl_se)
