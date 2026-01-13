@@ -7152,15 +7152,14 @@ static void proxy_migrate_task(struct rq *rq, struct rq_flags *rf,
 static void proxy_force_return(struct rq *rq, struct rq_flags *rf,
 			       struct task_struct *p)
 {
+	struct rq *this_rq, *target_rq;
+	struct rq_flags this_rf;
+	int cpu, wake_flag = WF_TTWU;
+
 	lockdep_assert_rq_held(rq);
 	WARN_ON(p == rq->curr);
 
 	_trace_sched_pe_return_migration(p);
-
-	proxy_resched_idle(rq);
-	set_task_blocked_on_waking(p, NULL);
-	get_task_struct(p);
-	block_task(rq, p, DEQUEUE_NOCLOCK | DEQUEUE_SPECIAL);
 
 	/*
 	 * We have to zap callbacks before unlocking the rq
@@ -7172,10 +7171,58 @@ static void proxy_force_return(struct rq *rq, struct rq_flags *rf,
 	rq_unpin_lock(rq, rf);
 	raw_spin_rq_unlock(rq);
 
-	wake_up_process(p);
-	put_task_struct(p);
+	/*
+	 * We drop the rq lock, and re-grab task_rq_lock to get
+	 * the pi_lock (needed for select_task_rq) as well.
+	 */
+	this_rq = task_rq_lock(p, &this_rf);
+
+	/*
+	 * Since we let go of the rq lock, the task may have been
+	 * woken or migrated to another rq before we  got the
+	 * task_rq_lock. So re-check we're on the same RQ. If
+	 * not, the task has already been migrated and that CPU
+	 * will handle any futher migrations.
+	 */
+	if (this_rq != rq)
+		goto err_out;
+
+	/* Similarly, if we've been dequeued, someone else will wake us */
+	if (!task_on_rq_queued(p))
+		goto err_out;
+
+	/*
+	 * Since we should only be calling here from __schedule()
+	 * -> find_proxy_task(), no one else should have
+	 * assigned current out from under us. But check and warn
+	 * if we see this, then bail.
+	 */
+	if (task_current(this_rq, p) || task_on_cpu(this_rq, p)) {
+		WARN_ONCE(1, "%s rq: %i current/on_cpu task %s %d  on_cpu: %i\n",
+			  __func__, cpu_of(this_rq),
+			  p->comm, p->pid, p->on_cpu);
+		goto err_out;
+	}
+
+	update_rq_clock(this_rq);
+	proxy_resched_idle(this_rq);
+	deactivate_task(this_rq, p, DEQUEUE_NOCLOCK);
+	cpu = select_task_rq(p, p->wake_cpu, &wake_flag);
+	set_task_cpu(p, cpu);
+	target_rq = cpu_rq(cpu);
+	clear_task_blocked_on(p, NULL);
+	task_rq_unlock(this_rq, p, &this_rf);
+
+	attach_one_task(target_rq, p);
 
 	/* Finally, re-grab the origianl rq lock and return to pick-again */
+	raw_spin_rq_lock(rq);
+	rq_repin_lock(rq, rf);
+	update_rq_clock(rq);
+	return;
+
+err_out:
+	task_rq_unlock(this_rq, p, &this_rf);
 	raw_spin_rq_lock(rq);
 	rq_repin_lock(rq, rf);
 	update_rq_clock(rq);
