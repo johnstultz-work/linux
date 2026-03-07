@@ -3025,12 +3025,28 @@ static inline void attach_task(struct rq *rq, struct task_struct *p)
  */
 static inline void attach_one_task(struct rq *rq, struct task_struct *p)
 {
-	struct rq_flags rf;
-
-	rq_lock(rq, &rf);
+	guard(rq_lock)(rq);
 	update_rq_clock(rq);
 	attach_task(rq, p);
-	rq_unlock(rq, &rf);
+}
+
+/*
+ * __attach_tasks() - attaches a list of tasks (using se.group_node) to
+ * the new rq
+ */
+static inline void __attach_tasks(struct rq *rq, struct list_head *tasks)
+{
+	guard(rq_lock)(rq);
+	update_rq_clock(rq);
+
+	while (!list_empty(tasks)) {
+		struct task_struct *p;
+
+		p = list_first_entry(tasks, struct task_struct, se.group_node);
+		list_del_init(&p->se.group_node);
+
+		attach_task(rq, p);
+	}
 }
 
 #ifdef CONFIG_PREEMPT_RT
