@@ -3875,14 +3875,6 @@ static inline void proxy_set_task_cpu(struct task_struct *p, int cpu)
 	p->wake_cpu = wake_cpu;
 }
 
-static bool proxy_task_runnable_but_waking(struct task_struct *p)
-{
-	if (!sched_proxy_exec())
-		return false;
-	return (READ_ONCE(p->__state) == TASK_RUNNING &&
-		READ_ONCE(p->blocked_on.lock) == PROXY_WAKING);
-}
-
 static void do_activate_blocked_waiter(struct rq *target_rq, struct task_struct *p, int en_flags)
 {
 	unsigned int state;
@@ -4178,11 +4170,6 @@ static inline void _trace_sched_pe_return_migration(struct task_struct *p)
 	trace_sched_pe_return_migration(p, p->wake_cpu);
 }
 #else /* !CONFIG_SCHED_PROXY_EXEC */
-static bool proxy_task_runnable_but_waking(struct task_struct *p)
-{
-	return false;
-}
-
 static inline bool proxy_needs_return(struct rq *rq, struct task_struct *p)
 {
 	return false;
@@ -4719,15 +4706,8 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 		 */
 		set_task_blocked_on_waking(p, NULL);
 
-		if (!ttwu_state_match(p, state, &success)) {
-			/*
-			 * If we're already TASK_RUNNING, and PROXY_WAKING
-			 * continue on to ttwu_runnable check to force
-			 * proxy_needs_return evaluation
-			 */
-			if (!proxy_task_runnable_but_waking(p))
-				break;
-		}
+		if (!ttwu_state_match(p, state, &success))
+			break;
 
 		trace_sched_waking(p);
 
