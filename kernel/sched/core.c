@@ -7344,6 +7344,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 		if (blocked_on->lock == PROXY_WAKING) {
 			if (task_current(rq, p)) {
 				clear_task_blocked_on(p, PROXY_WAKING);
+				WRITE_ONCE(p->__state, TASK_RUNNING);
 				return p;
 			}
 			action = NEEDS_RETURN;
