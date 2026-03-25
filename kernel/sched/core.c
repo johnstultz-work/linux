@@ -3704,7 +3704,17 @@ static inline void ttwu_do_wakeup(struct task_struct *p)
 }
 
 #ifdef CONFIG_SCHED_PROXY_EXEC
-static inline struct task_struct *proxy_resched_idle(struct rq *rq);
+static void zap_balance_callbacks(struct rq *rq);
+
+static inline void proxy_reset_donor(struct rq *rq)
+{
+	WARN_ON_ONCE(rq->donor == rq->curr);
+
+	put_prev_set_next_task(rq, rq->donor, rq->curr);
+	rq_set_donor(rq, rq->curr);
+	zap_balance_callbacks(rq);
+	resched_curr(rq);
+}
 
 /*
  * Checks to see if task p has been proxy-migrated to another rq
@@ -3729,7 +3739,7 @@ static inline bool proxy_needs_return(struct rq *rq, struct task_struct *p)
 
 	/* If we're return migrating the rq->donor, switch it out for idle */
 	if (task_current_donor(rq, p))
-		proxy_resched_idle(rq);
+		proxy_reset_donor(rq);
 
 	block_task(rq, p, TASK_WAKING);
 	return true;
