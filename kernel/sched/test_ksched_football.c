@@ -83,6 +83,16 @@ struct rt_mutex *mutex_mid_list;
 #define test_unlock(x)		rt_mutex_unlock(x)
 #endif
 
+#define ATRACE_PRINTK_BUF 256
+static int atrace_printk(char *str)
+{
+       char buf[ATRACE_PRINTK_BUF];
+
+       snprintf(buf, ATRACE_PRINTK_BUF, "I|%i|%s", current->pid, str);
+       trace_puts(buf);
+       return 0;
+}
+
 static struct task_struct *create_fifo_thread(int (*threadfn)(void *data),
 					      void *data, char *name, int prio)
 {
@@ -117,6 +127,10 @@ static int spawn_players(int (*threadfn)(void *data), char *name, int prio)
 {
 	unsigned long current_players, start, i;
 	struct task_struct *kth;
+	char buf[125];
+
+	sprintf(buf, "spawn_players %s start!", name);
+	atrace_printk(buf);
 
 	current_players = atomic_read(&players_ready);
 	/* Create players_per_team threads */
@@ -138,6 +152,8 @@ static int spawn_players(int (*threadfn)(void *data), char *name, int prio)
 			return -1;
 		}
 	}
+	sprintf(buf, "spawn_players %s done!", name);
+	atrace_printk(buf);
 	return 0;
 }
 
@@ -241,6 +257,7 @@ static int referee_thread(void *arg)
 	if (spawn_players(crazy_fan_thread, "crazy-fan-thread", FAN_PRIO))
 		goto out;
 	pr_info("All players checked in! Starting game.\n");
+	atrace_printk("Starting game!\n");
 	atomic_set(&ball_pos, 0);
 	msleep(game_time * 1000);
 	final_pos = atomic_read(&ball_pos);
@@ -249,6 +266,7 @@ static int referee_thread(void *arg)
 	WARN_ON(final_pos != 0);
 out:
 	pr_info("Game Over!\n");
+	atrace_printk("Game Over!\n");
 	WRITE_ONCE(game_over, true);
 	complete(&referee_done);
 	return 0;
