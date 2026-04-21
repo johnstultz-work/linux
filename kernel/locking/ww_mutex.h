@@ -28,10 +28,10 @@ static inline struct mutex_waiter *
 __ww_waiter_prev(struct mutex *lock, struct mutex_waiter *w)
 	__must_hold(&lock->wait_lock)
 {
-	w = list_prev_entry(w, list);
 	if (lock->first_waiter == w)
 		return NULL;
 
+	w = list_prev_entry(w, list);
 	return w;
 }
 

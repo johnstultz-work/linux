@@ -203,22 +203,34 @@ static inline void __mutex_clear_flag(struct mutex *lock, unsigned long flag)
  */
 static void
 __mutex_add_waiter(struct mutex *lock, struct mutex_waiter *waiter,
-		   struct mutex_waiter *first)
+		   struct mutex_waiter *pos)
 	__must_hold(&lock->wait_lock)
 {
+	struct mutex_waiter *first = lock->first_waiter;
+
 	hung_task_set_blocker(lock, BLOCKER_TYPE_MUTEX);
 	debug_mutex_add_waiter(lock, waiter, current);
 
-	if (!first)
-		first = lock->first_waiter;
+	if (pos) {
+		/*
+		 * Insert @waiter before @pos.
+		 */
+		list_add_tail(&waiter->list, &pos->list);
+		/*
+		 * If @pos == @first, then @waiter will be the new first.
+		 */
+		if (pos == first)
+			lock->first_waiter = waiter;
+		return;
+	}
 
 	if (first) {
 		list_add_tail(&waiter->list, &first->list);
-	} else {
-		INIT_LIST_HEAD(&waiter->list);
-		lock->first_waiter = waiter;
-		__mutex_set_flag(lock, MUTEX_FLAG_WAITERS);
+		return;
 	}
+	INIT_LIST_HEAD(&waiter->list);
+	lock->first_waiter = waiter;
+	__mutex_set_flag(lock, MUTEX_FLAG_WAITERS);
 }
 
 static void
@@ -229,10 +241,8 @@ __mutex_remove_waiter(struct mutex *lock, struct mutex_waiter *waiter)
 		__mutex_clear_flag(lock, MUTEX_FLAGS);
 		lock->first_waiter = NULL;
 	} else {
-		if (lock->first_waiter == waiter) {
-			lock->first_waiter = list_first_entry(&waiter->list,
-							      struct mutex_waiter, list);
-		}
+		if (lock->first_waiter == waiter)
+			lock->first_waiter = list_next_entry(waiter, list);
 		list_del(&waiter->list);
 	}
 
