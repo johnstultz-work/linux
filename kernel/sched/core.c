@@ -7637,9 +7637,14 @@ pick_again:
 			 * anything, since B == B. However, A might have
 			 * missed a RT/DL balance opportunity due to being
 			 * on_cpu.
+			 *
+			 * sched_ext tracks curr/donor itself; re-entering set_next_task_scx
+			 * here dispatches through a stale/NULL BPF ops vtable.
 			 */
-			donor->sched_class->put_prev_task(rq, donor, donor);
-			donor->sched_class->set_next_task(rq, donor, true);
+			if (donor->sched_class != &ext_sched_class) {
+				donor->sched_class->put_prev_task(rq, donor, donor);
+				donor->sched_class->set_next_task(rq, donor, true);
+			}
 		}
 	} else {
 		rq_set_donor(rq, next);
