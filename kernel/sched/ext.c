@@ -1450,9 +1450,11 @@ static bool dequeue_task_scx(struct rq *rq, struct task_struct *p, int deq_flags
 	 * information meaningful to the BPF scheduler and can be suppressed by
 	 * skipping the callbacks if the task is !QUEUED.
 	 */
-	if (SCX_HAS_OP(sch, stopping) && task_current(rq, p)) {
+	if (SCX_HAS_OP(sch, stopping) && task_current(rq, p) &&
+	    (p->scx.flags & SCX_TASK_IS_RUNNING)) {
 		update_curr_scx(rq);
 		SCX_CALL_OP_TASK(sch, SCX_KF_REST, stopping, rq, p, false);
+		p->scx.flags &= ~SCX_TASK_IS_RUNNING;
 	}
 
 	if (SCX_HAS_OP(sch, quiescent) && !task_on_rq_migrating(p))
@@ -2251,9 +2253,11 @@ static void set_next_task_scx(struct rq *rq, struct task_struct *p, bool first)
 	p->se.exec_start = rq_clock_task(rq);
 
 	/* see dequeue_task_scx() on why we skip when !QUEUED */
-	if (SCX_HAS_OP(sch, running) && (p->scx.flags & SCX_TASK_QUEUED))
+	if (SCX_HAS_OP(sch, running) && (p->scx.flags & SCX_TASK_QUEUED) &&
+	    !task_is_blocked(p)) {
 		SCX_CALL_OP_TASK(sch, SCX_KF_REST, running, rq, p);
-
+		p->scx.flags |= SCX_TASK_IS_RUNNING;
+	}
 	clr_task_runnable(p, true);
 
 	/*
@@ -2344,9 +2348,11 @@ static void put_prev_task_scx(struct rq *rq, struct task_struct *p,
 	update_curr_scx(rq);
 
 	/* see dequeue_task_scx() on why we skip when !QUEUED */
-	if (SCX_HAS_OP(sch, stopping) && (p->scx.flags & SCX_TASK_QUEUED))
+	if (SCX_HAS_OP(sch, stopping) && (p->scx.flags & SCX_TASK_QUEUED) &&
+	    (p->scx.flags & SCX_TASK_IS_RUNNING)) {
 		SCX_CALL_OP_TASK(sch, SCX_KF_REST, stopping, rq, p, true);
-
+		p->scx.flags &= ~SCX_TASK_IS_RUNNING;
+	}
 	if (p->scx.flags & SCX_TASK_QUEUED) {
 		set_task_runnable(rq, p);
 
