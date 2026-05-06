@@ -1576,6 +1576,14 @@ static bool task_can_run_on_remote_rq(struct scx_sched *sch,
 
 	WARN_ON_ONCE(task_cpu(p) == cpu);
 
+	/* Make sure tasks aren't on a cpu */
+	if (task_on_cpu(task_rq(p), p))
+		return false;
+
+	/* Don't migrate blocked tasks, proxy-exec will handle this */
+	if (task_is_blocked(p))
+		return false;
+
 	/*
 	 * If @p has migration disabled, @p->cpus_ptr is updated to contain only
 	 * the pinned CPU in migrate_disable_switch() while @p is being switched
@@ -2341,6 +2349,23 @@ static void put_prev_task_scx(struct rq *rq, struct task_struct *p,
 
 	if (p->scx.flags & SCX_TASK_QUEUED) {
 		set_task_runnable(rq, p);
+
+		/*
+		 * Mutex-blocked donors stay queued on the runqueue under proxy
+		 * execution, but the donor never runs as itself, proxy-exec
+		 * walks the blocked_on chain on the next __schedule() and runs
+		 * the lock owner in its place.
+		 *
+		 * Put the donor on the local DSQ directly, so pick_next_task()
+		 * can still see it, find_proxy_task() will be invoked on
+		 * next->blocked_on and either run the chain owner here, or call
+		 * proxy_force_return() and let BPF make a new dispatch decision
+		 * once the task is no longer blocked.
+		 */
+		if (task_is_blocked(p)) {
+			dispatch_enqueue(sch, &rq->scx.local_dsq, p, 0);
+			goto switch_class;
+		}
 
 		/*
 		 * If @p has slice left and is being put, @p is getting
