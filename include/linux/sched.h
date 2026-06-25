@@ -817,6 +817,7 @@ enum blocked_on_type {
 	BO_T_NONE,
 	BO_T_MUTEX,
 	BO_T_RWSEM,
+	BO_T_RT_MUTEX,
 };
 
 struct blocked_on_lock {
@@ -2224,6 +2225,11 @@ static inline void clear_task_blocked_on(struct task_struct *p, void *m)
 }
 
 #else
+static inline void __set_task_blocked_on(struct task_struct *p, void *m,
+					 enum blocked_on_type type)
+{
+}
+
 static inline void __clear_task_blocked_on(struct task_struct *p, void *m)
 {
 }

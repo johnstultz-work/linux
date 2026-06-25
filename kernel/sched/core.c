@@ -69,6 +69,7 @@
 #include <linux/wait_api.h>
 #include <linux/workqueue_api.h>
 #include <linux/livepatch_sched.h>
+#include <linux/rtmutex.h>
 
 #ifdef CONFIG_PREEMPT_DYNAMIC
 # ifdef CONFIG_GENERIC_IRQ_ENTRY
@@ -152,6 +153,9 @@ static inline struct task_struct *__blocked_on_owner(struct blocked_on_lock *bo)
 		return __mutex_owner(bo->lock);
 	case BO_T_RWSEM:
 		return rwsem_writer_owner(bo->lock);
+	case BO_T_RT_MUTEX:
+		/* XXX needs CONFIG_RT_MUTEXES */
+		return rt_mutex_owner(bo->lock);
 	default:
 		BUG();
 	}
@@ -7311,6 +7315,8 @@ lock_blocked_on_lock(struct blocked_on_lock *bo)
 		raw_spin_lock(&((struct mutex *)bo->lock)->wait_lock);
 	else if (bo->type == BO_T_RWSEM)
 		raw_spin_lock(&((struct rw_semaphore *)bo->lock)->wait_lock);
+	else if (bo->type == BO_T_RT_MUTEX)
+		raw_spin_lock(&((struct rt_mutex_base *)bo->lock)->wait_lock);
 	else
 		BUG();
 }
@@ -7322,6 +7328,8 @@ unlock_blocked_on_lock(struct blocked_on_lock *bo)
 		raw_spin_unlock(&((struct mutex *)bo->lock)->wait_lock);
 	else if (bo->type == BO_T_RWSEM)
 		raw_spin_unlock(&((struct rw_semaphore *)bo->lock)->wait_lock);
+	else if (bo->type == BO_T_RT_MUTEX)
+		raw_spin_unlock(&((struct rt_mutex_base *)bo->lock)->wait_lock);
 	else
 		BUG();
 }

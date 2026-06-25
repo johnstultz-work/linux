@@ -1439,6 +1439,9 @@ retry_private:
 		/* XXX support trylock syscall */
 
 		while (1) {
+			raw_spin_lock_irq(&current->blocked_lock);
+			__set_task_blocked_on(current, &q.pi_state->pi_mutex, BO_T_RT_MUTEX);
+			raw_spin_unlock_irq(&current->blocked_lock);
 			set_current_state(TASK_INTERRUPTIBLE | TASK_FREEZABLE);
 			if (first) {
 				futex_queue(&q, hb, current);
@@ -1451,6 +1454,10 @@ retry_private:
 			}
 
 			futex_do_wait(&q, to);
+
+			raw_spin_lock_irq(&current->blocked_lock);
+			__clear_task_blocked_on(current, &q.pi_state->pi_mutex);
+			raw_spin_unlock_irq(&current->blocked_lock);
 
 			futex_q_lockptr_lock(&q);
 			if (to && !to->task)  {
@@ -1549,6 +1556,7 @@ retry:
 		get_pi_state(pi_state); /* Prevent pi_state from going away */
 		/* Leave it queued, it gets unqueued on the lock side */
 		get_task_struct(top_waiter->task);
+		clear_task_blocked_on(top_waiter->task, &pi_state->pi_mutex);
 		wake_q_add_safe(&wake_q, top_waiter->task);
 
 		spin_unlock(&hb->lock);
