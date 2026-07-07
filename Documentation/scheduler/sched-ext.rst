@@ -487,6 +487,12 @@ and edge cases, to name a few examples:
   class, in which case it will exit the tick-dispatch loop even though it is runnable
   and has a non-zero slice.
 
+* Under proxy execution, sched_ext continues to observe the donor as the current
+  scheduling context. A blocked donor does not enter an ``ops.running()`` /
+  ``ops.stopping()`` session because it does not execute itself, and the lock
+  owner executing on its behalf is intentionally not reported through these
+  callbacks.
+
 See the "Scheduling Cycle" section for a more detailed description of how
 a freshly woken up task gets on a CPU.
 
