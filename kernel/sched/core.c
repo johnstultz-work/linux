@@ -7740,7 +7740,8 @@ static void __sched notrace __schedule(int sched_mode)
 		 * task_is_blocked() will always be false).
 		 */
 		try_to_block_task(rq, prev, &prev_state,
-				  !task_is_blocked(prev));
+				  !task_is_blocked(prev) ||
+				  !scx_allow_proxy_exec(prev));
 		switch_count = &prev->nvcsw;
 	}
 
@@ -8298,6 +8299,8 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 
 	if (prev_class != next_class)
 		queue_flag |= DEQUEUE_CLASS;
+
+	scx_prepare_setscheduler(p, next_class);
 
 	scoped_guard (sched_change, p, queue_flag) {
 		/*
