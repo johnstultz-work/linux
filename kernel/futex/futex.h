@@ -389,7 +389,8 @@ extern int futex_lock_pi_atomic(u32 __user *uaddr, struct futex_hash_bucket *hb,
 				struct futex_pi_state **ps,
 				struct task_struct *task,
 				struct task_struct **exiting,
-				int set_waiters);
+				int set_waiters,
+				bool ping);
 
 extern int refill_pi_state_cache(void);
 extern void get_pi_state(struct futex_pi_state *pi_state);
@@ -477,5 +478,10 @@ extern int futex_unlock_pi(u32 __user *uaddr, unsigned int flags, void __user *p
 extern int futex_lock_pi(u32 __user *uaddr, unsigned int flags, ktime_t *time, int trylock);
 
 bool futex_robust_list_clear_pending(void __user *pop, unsigned int flags);
+
+extern int futex_unlock_ping(u32 __user *uaddr, unsigned int flags);
+
+extern int futex_lock_ping(u32 __user *uaddr, unsigned int flags, ktime_t *time,
+			   int trylock);
 
 #endif /* _FUTEX_H */
