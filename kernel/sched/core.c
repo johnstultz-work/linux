@@ -3795,6 +3795,7 @@ static inline void ttwu_do_wakeup(struct task_struct *p)
 }
 
 #ifdef CONFIG_SCHED_PROXY_EXEC
+static void proxy_deactivate(struct rq *rq, struct task_struct *donor);
 static void zap_balance_callbacks(struct rq *rq);
 
 static inline void proxy_reset_donor(struct rq *rq)
@@ -7011,6 +7012,23 @@ static inline void sched_core_cpu_dying(unsigned int cpu)
 		rq->core = rq;
 }
 
+static struct task_struct *
+sched_core_swap_pick(struct rq *rq, struct task_struct *next)
+{
+	if (!rq->core_pick_leader) {
+		if (!rq->core->core_forceidle_count++)
+			rq->core->core_forceidle_seq++;
+
+		proxy_resched_idle(rq);
+		queue_core_balance(rq);
+		return rq->idle;
+	}
+
+	clear_task_blocked_on(rq->donor, NULL);
+	proxy_deactivate(rq, rq->donor);
+	return RETRY_TASK;
+}
+
 #else /* !CONFIG_SCHED_CORE: */
 
 static inline void sched_core_cpu_starting(unsigned int cpu) {}
@@ -7021,6 +7039,18 @@ static struct task_struct *
 pick_next_task(struct rq *rq, struct rq_flags *rf)
 {
 	return __pick_next_task(rq, rf);
+}
+
+static struct task_struct *
+sched_core_swap_pick(struct rq *rq, struct task_struct *next)
+{
+	/*
+	 * Caller should always check !sched_cpu_cookie_match(rq, next)
+	 * which is always false for !CONFIG_SCHED_CORE and execution
+	 * should never reach here.
+	 */
+	BUG();
+	return next;
 }
 
 #endif /* !CONFIG_SCHED_CORE */
@@ -7423,13 +7453,6 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 	}
 	WARN_ON_ONCE(owner && !owner->on_rq);
 
-	if (owner && !sched_cpu_cookie_match(rq, owner)) {
-		if (curr_in_chain)
-			return proxy_resched_idle(rq);
-		p = donor; /* Deactivate the donor, not the runnable owner */
-		clear_task_blocked_on(p, NULL);
-		goto deactivate;
-	}
 	return owner;
 
 deactivate:
@@ -7589,6 +7612,11 @@ pick_again:
 			if (next == rq->idle) {
 				zap_balance_callbacks(rq);
 				goto keep_resched;
+			}
+			if (!sched_cpu_cookie_match(rq, next)) {
+				next = sched_core_swap_pick(rq, next);
+				if (next == RETRY_TASK)
+					goto pick_again;
 			}
 		}
 		if (rq->donor == prev_donor && prev != next) {
