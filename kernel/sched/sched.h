@@ -2540,6 +2540,7 @@ extern const u32		sched_prio_to_wmult[40];
  * ENQUEUE_REPLENISH - CBS (replenish runtime and postpone deadline)
  * ENQUEUE_MIGRATED  - the task was migrated during wakeup
  * ENQUEUE_RQ_SELECTED - ->select_task_rq() was called
+ * ENQUEUE_PROXY     - activate a blocked donor behind a waking owner
  *
  * XXX SAVE/RESTORE in combination with CLASS doesn't really make sense, but
  * SCHED_DEADLINE seems to rely on this for now.
@@ -2571,6 +2572,7 @@ extern const u32		sched_prio_to_wmult[40];
 #define ENQUEUE_MIGRATED	0x00040000
 #define ENQUEUE_INITIAL		0x00080000
 #define ENQUEUE_RQ_SELECTED	0x00100000
+#define ENQUEUE_PROXY		0x00200000
 
 #define RETRY_TASK		((void *)-1UL)
 

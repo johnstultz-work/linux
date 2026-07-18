@@ -3900,7 +3900,7 @@ static void activate_blocked_waiters(struct rq *target_rq,
 {
 	struct list_head bal_head;
 	unsigned long flags;
-	int en_flags = ENQUEUE_WAKEUP | ENQUEUE_NOCLOCK;
+	int en_flags = ENQUEUE_WAKEUP | ENQUEUE_NOCLOCK | ENQUEUE_PROXY;
 
 	if (!sched_proxy_exec())
 		return;
