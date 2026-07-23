@@ -3901,6 +3901,13 @@ static void do_activate_blocked_waiter(struct rq *target_rq, struct task_struct 
 			return;
 		}
 		/*
+		 * Keep donors blocked if their scheduling class doesn't support
+		 * retaining them for proxy execution.
+		 */
+		if (!scx_allow_proxy_exec(p))
+			return;
+
+		/*
 		 * Have to make sure we handle nr_iowait adjustment before
 		 * we call proxy_set_task_cpu() to ensure we are adjusting
 		 * the same runqueue we left (where block_task()
