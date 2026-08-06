@@ -6606,6 +6606,10 @@ extern void task_vruntime_update(struct rq *rq, struct task_struct *p, bool in_f
 
 static void queue_core_balance(struct rq *rq);
 
+static struct task_struct *
+find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf);
+static inline struct task_struct *proxy_resched_idle(struct rq *rq);
+
 static __always_inline bool sched_core_proxy_pick(struct rq *rq)
 {
 	return sched_proxy_exec() && unlikely(rq->core_pick_blocked_donor);
@@ -7618,6 +7622,7 @@ migrate_task:
 	return NULL;
 }
 #else /* SCHED_PROXY_EXEC */
+static inline struct task_struct *proxy_resched_idle(struct rq *rq) { return rq->idle; }
 static struct task_struct *
 find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 {
